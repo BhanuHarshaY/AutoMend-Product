@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0a0e1a;
+  color: #e8edf5;
+  font-family: 'DM Sans', sans-serif;
+}
+
+/* ReactFlow overrides */
+.react-flow__background { background: #0a0e1a; }
+.react-flow__edge-path { stroke: #2ec4b6; stroke-width: 2; }
+.react-flow__handle {
+  background: #2ec4b6 !important;
+  border: 2px solid #0a0e1a !important;
+  width: 10px !important;
+  height: 10px !important;
+}
+.react-flow__controls {
+  background: #111827;
+  border: 1px solid #1e2d4a;
+  border-radius: 8px;
+}
+.react-flow__controls-button {
+  background: #111827;
+  border-bottom: 1px solid #1e2d4a;
+  color: #7b8db0;
+}
+.react-flow__controls-button:hover { background: #1e2d4a; color: #e8edf5; }
+.react-flow__minimap { background: #111827 !important; border: 1px solid #1e2d4a; border-radius: 8px; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0a0e1a; }
+::-webkit-scrollbar-thumb { background: #1e2d4a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2ec4b6; }
