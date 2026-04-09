@@ -1,16 +1,18 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Plus, Zap, Activity, Clock, Edit2, Eye, Trash2, ChevronRight } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Plus, Zap, Activity, Clock, Edit2, Eye, Trash2 } from 'lucide-react'
 import { SAMPLE_PROJECTS, Project, ProjectStatus } from '@/lib/data'
 
 const STATUS_STYLES: Record<ProjectStatus, { dot: string; badge: string; label: string }> = {
-  active:  { dot: 'bg-accent-teal',   badge: 'bg-teal-500/10 text-teal-400 border-teal-500/30',   label: 'Active'  },
-  paused:  { dot: 'bg-accent-yellow', badge: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30', label: 'Paused' },
-  draft:   { dot: 'bg-gray-500',      badge: 'bg-gray-500/10 text-gray-400 border-gray-500/30',    label: 'Draft'   },
+  active:  { dot: 'bg-[#2ec4b6]', badge: 'bg-teal-500/10 text-teal-400 border-teal-500/30', label: 'Active' },
+  paused:  { dot: 'bg-[#ffbe0b]', badge: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30', label: 'Paused' },
+  draft:   { dot: 'bg-gray-500',  badge: 'bg-gray-500/10 text-gray-400 border-gray-500/30', label: 'Draft' },
 }
 
-function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string, desc: string) => void }) {
+function NewProjectModal({ onClose, onCreate }: {
+  onClose: () => void
+  onCreate: (name: string, desc: string) => void
+}) {
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
   return (
@@ -56,13 +58,18 @@ function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate:
   )
 }
 
-function ProjectCard({ project, onEdit, onView, onDelete }: {
+function ProjectCard({ project, onEdit, onDelete }: {
   project: Project
   onEdit: () => void
-  onView: () => void
   onDelete: () => void
 }) {
   const s = STATUS_STYLES[project.status]
+  const [hasWorkflow, setHasWorkflow] = useState(false)
+
+  useEffect(() => {
+    setHasWorkflow(!!localStorage.getItem(`workflow-${project.id}`))
+  }, [project.id])
+
   return (
     <div className="group bg-[#111827] border border-[#1e2d4a] rounded-xl p-5 hover:border-[#2ec4b6]/40 transition-all duration-200 hover:shadow-lg hover:shadow-teal-500/5">
       <div className="flex items-start justify-between mb-3">
@@ -72,9 +79,7 @@ function ProjectCard({ project, onEdit, onView, onDelete }: {
         </div>
         <span className={`text-xs px-2 py-0.5 rounded-full border ${s.badge}`}>{s.label}</span>
       </div>
-
       <p className="text-xs text-[#7b8db0] mb-4 leading-relaxed line-clamp-2">{project.description}</p>
-
       <div className="flex items-center gap-4 text-xs text-[#3a4a6b] mb-4">
         <span className="flex items-center gap-1.5">
           <Zap size={11} className="text-[#e63946]" />
@@ -89,9 +94,15 @@ function ProjectCard({ project, onEdit, onView, onDelete }: {
           {project.createdAt}
         </span>
       </div>
-
+      {hasWorkflow && (
+        <div className="mb-3">
+          <span className="text-xs text-[#2ec4b6] bg-[#2ec4b6]/10 border border-[#2ec4b6]/20 px-2 py-0.5 rounded-full">
+            ✓ Workflow saved
+          </span>
+        </div>
+      )}
       <div className="flex gap-2 pt-3 border-t border-[#1e2d4a]">
-        <button onClick={onView} className="flex items-center gap-1.5 text-xs text-[#7b8db0] hover:text-[#2ec4b6] transition-colors px-2 py-1 rounded hover:bg-teal-500/5">
+        <button onClick={onEdit} className="flex items-center gap-1.5 text-xs text-[#7b8db0] hover:text-[#2ec4b6] transition-colors px-2 py-1 rounded hover:bg-teal-500/5">
           <Eye size={12} /> View
         </button>
         <button onClick={onEdit} className="flex items-center gap-1.5 text-xs text-[#7b8db0] hover:text-[#3a86ff] transition-colors px-2 py-1 rounded hover:bg-blue-500/5">
@@ -106,17 +117,20 @@ function ProjectCard({ project, onEdit, onView, onDelete }: {
 }
 
 export default function HomePage() {
-  const router = useRouter()
-  const [projects, setProjects] = useState<Project[]>(SAMPLE_PROJECTS)
+  const [projects, setProjects] = useState<Project[]>([])
   const [showModal, setShowModal] = useState(false)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | ProjectStatus>('all')
 
-  const filtered = projects.filter(p => {
-    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase())
-    const matchFilter = filter === 'all' || p.status === filter
-    return matchSearch && matchFilter
-  })
+  useEffect(() => {
+    const saved = localStorage.getItem('automend-projects')
+    if (saved) {
+      setProjects(JSON.parse(saved))
+    } else {
+      setProjects(SAMPLE_PROJECTS)
+      localStorage.setItem('automend-projects', JSON.stringify(SAMPLE_PROJECTS))
+    }
+  }, [])
 
   const handleCreate = (name: string, desc: string) => {
     const newProject: Project = {
@@ -128,15 +142,27 @@ export default function HomePage() {
       triggerCount: 0,
       lastRun: null,
     }
-    setProjects(prev => [newProject, ...prev])
+    const updated = [newProject, ...projects]
+    localStorage.setItem('automend-projects', JSON.stringify(updated))
     setShowModal(false)
-    router.push(`/workflow/${newProject.id}`)
+    window.location.href = `/workflow/${newProject.id}`
   }
 
-  const handleDelete = (id: string) => setProjects(prev => prev.filter(p => p.id !== id))
+  const handleDelete = (id: string) => {
+    const updated = projects.filter(p => p.id !== id)
+    setProjects(updated)
+    localStorage.setItem('automend-projects', JSON.stringify(updated))
+    localStorage.removeItem(`workflow-${id}`)
+  }
+
+  const filtered = projects.filter(p => {
+    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase())
+    const matchFilter = filter === 'all' || p.status === filter
+    return matchSearch && matchFilter
+  })
 
   const counts = {
-    all: projects.length,
+    all:    projects.length,
     active: projects.filter(p => p.status === 'active').length,
     paused: projects.filter(p => p.status === 'paused').length,
     draft:  projects.filter(p => p.status === 'draft').length,
@@ -144,7 +170,6 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#0a0e1a]">
-      {/* Top nav */}
       <header className="border-b border-[#1e2d4a] px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#e63946] to-[#2ec4b6] flex items-center justify-center">
@@ -162,13 +187,11 @@ export default function HomePage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
-        {/* Hero */}
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-white mb-1">Projects</h1>
           <p className="text-sm text-[#7b8db0]">Manage your MLOps remediation workflows</p>
         </div>
 
-        {/* Filters + Search */}
         <div className="flex items-center gap-3 mb-6 flex-wrap">
           <div className="flex gap-1 bg-[#111827] border border-[#1e2d4a] rounded-lg p-1">
             {(['all', 'active', 'paused', 'draft'] as const).map(f => (
@@ -176,9 +199,7 @@ export default function HomePage() {
                 key={f}
                 onClick={() => setFilter(f)}
                 className={`px-3 py-1.5 text-xs rounded-md capitalize transition-colors ${
-                  filter === f
-                    ? 'bg-[#1e2d4a] text-white'
-                    : 'text-[#7b8db0] hover:text-white'
+                  filter === f ? 'bg-[#1e2d4a] text-white' : 'text-[#7b8db0] hover:text-white'
                 }`}
               >
                 {f} <span className="opacity-60 ml-1">{counts[f]}</span>
@@ -193,7 +214,6 @@ export default function HomePage() {
           />
         </div>
 
-        {/* Grid */}
         {filtered.length === 0 ? (
           <div className="text-center py-20 text-[#3a4a6b]">
             <Zap size={32} className="mx-auto mb-3 opacity-30" />
@@ -205,12 +225,10 @@ export default function HomePage() {
               <ProjectCard
                 key={p.id}
                 project={p}
-                onEdit={() => router.push(`/workflow/${p.id}`)}
-                onView={() => router.push(`/workflow/${p.id}`)}
+                onEdit={() => { window.location.href = `/workflow/${p.id}` }}
                 onDelete={() => handleDelete(p.id)}
               />
             ))}
-            {/* Add new card */}
             <button
               onClick={() => setShowModal(true)}
               className="border border-dashed border-[#1e2d4a] rounded-xl p-5 flex flex-col items-center justify-center gap-2 text-[#3a4a6b] hover:border-[#2ec4b6]/50 hover:text-[#2ec4b6] transition-all min-h-[180px] group"
