@@ -3,10 +3,10 @@ import { useState, useEffect, useRef } from 'react'
 import { Plus, Zap, Activity, Clock, Edit2, ChevronRight, Trash2, GitBranch } from 'lucide-react'
 import { SAMPLE_PROJECTS, Project, ProjectStatus } from '@/lib/data'
 
-const STATUS_STYLES: Record<ProjectStatus, { dot: string; badge: string; label: string }> = {
-  active:  { dot: 'bg-[#2ec4b6]', badge: 'bg-teal-500/10 text-teal-400 border-teal-500/30', label: 'Active' },
-  paused:  { dot: 'bg-[#ffbe0b]', badge: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30', label: 'Paused' },
-  draft:   { dot: 'bg-gray-500',  badge: 'bg-gray-500/10 text-gray-400 border-gray-500/30', label: 'Draft' },
+const STATUS_STYLES: Record<ProjectStatus, { dot: string; badge: string; label: string; border: string }> = {
+  active:  { dot: 'bg-[#2ec4b6]', badge: 'bg-teal-500/10 text-teal-400 border-teal-500/30', label: 'Active',  border: 'border-t-[#2ec4b6]' },
+  paused:  { dot: 'bg-[#ffbe0b]', badge: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30', label: 'Paused', border: 'border-t-[#ffbe0b]' },
+  draft:   { dot: 'bg-gray-500',  badge: 'bg-gray-500/10 text-gray-400 border-gray-500/30', label: 'Draft',   border: 'border-t-gray-600'  },
 }
 
 function NewProjectModal({ onClose, onCreate }: {
@@ -16,10 +16,17 @@ function NewProjectModal({ onClose, onCreate }: {
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-[#111827] border border-[#1e2d4a] rounded-xl p-6 w-full max-w-md shadow-2xl">
-        <h2 className="text-lg font-semibold text-white mb-1">New Project</h2>
-        <p className="text-sm text-[#7b8db0] mb-5">Create a new AutoMend project</p>
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50">
+      <div className="bg-[#111827] border border-[#1e2d4a] rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#2ec4b6] to-[#3a86ff] flex items-center justify-center">
+            <Plus size={16} className="text-white" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-white">New Project</h2>
+            <p className="text-xs text-[#7b8db0]">Create a new AutoMend project</p>
+          </div>
+        </div>
         <div className="space-y-4">
           <div>
             <label className="block text-xs font-medium text-[#7b8db0] mb-1.5 uppercase tracking-wider">Project Name</label>
@@ -27,7 +34,7 @@ function NewProjectModal({ onClose, onCreate }: {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="e.g. Fraud Detection API"
-              className="w-full bg-[#0a0e1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-sm text-white placeholder-[#3a4a6b] focus:outline-none focus:border-[#2ec4b6] transition-colors"
+              className="w-full bg-[#0a0e1a] border border-[#1e2d4a] rounded-xl px-3 py-2.5 text-sm text-white placeholder-[#3a4a6b] focus:outline-none focus:border-[#2ec4b6] transition-colors"
             />
           </div>
           <div>
@@ -37,18 +44,18 @@ function NewProjectModal({ onClose, onCreate }: {
               onChange={e => setDesc(e.target.value)}
               placeholder="What model does this project monitor?"
               rows={3}
-              className="w-full bg-[#0a0e1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-sm text-white placeholder-[#3a4a6b] focus:outline-none focus:border-[#2ec4b6] transition-colors resize-none"
+              className="w-full bg-[#0a0e1a] border border-[#1e2d4a] rounded-xl px-3 py-2.5 text-sm text-white placeholder-[#3a4a6b] focus:outline-none focus:border-[#2ec4b6] transition-colors resize-none"
             />
           </div>
         </div>
         <div className="flex gap-3 mt-6">
-          <button onClick={onClose} className="flex-1 px-4 py-2.5 text-sm text-[#7b8db0] border border-[#1e2d4a] rounded-lg hover:border-[#2e3d5a] hover:text-white transition-colors">
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 text-sm text-[#7b8db0] border border-[#1e2d4a] rounded-xl hover:border-[#2e3d5a] hover:text-white transition-colors">
             Cancel
           </button>
           <button
             onClick={() => name.trim() && onCreate(name, desc)}
             disabled={!name.trim()}
-            className="flex-1 px-4 py-2.5 text-sm font-medium bg-[#2ec4b6] text-[#0a0e1a] rounded-lg hover:bg-[#25a99d] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex-1 px-4 py-2.5 text-sm font-medium bg-gradient-to-r from-[#2ec4b6] to-[#3a86ff] text-white rounded-xl hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
           >
             Create Project
           </button>
@@ -70,8 +77,8 @@ function WorkflowsPopover({ project, onClose }: { project: Project; onClose: () 
   }, [onClose])
 
   return (
-    <div ref={ref} className="absolute top-0 left-full ml-2 w-64 bg-[#111827] border border-[#1e2d4a] rounded-xl shadow-2xl z-50 overflow-hidden">
-      <div className="px-4 py-3 border-b border-[#1e2d4a]">
+    <div ref={ref} className="absolute top-full left-0 mt-1 w-64 bg-[#111827] border border-[#1e2d4a] rounded-xl shadow-2xl z-50 overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#1e2d4a] bg-gradient-to-r from-[#2ec4b6]/5 to-transparent">
         <p className="text-xs font-semibold text-white">{project.name}</p>
         <p className="text-xs text-[#7b8db0] mt-0.5">Workflows</p>
       </div>
@@ -132,7 +139,9 @@ function ProjectCard({ project, onDelete, onRename }: {
   const [editingName, setEditingName] = useState<string | null>(null)
 
   return (
-    <div className="relative group bg-[#111827] border border-[#1e2d4a] rounded-xl p-5 hover:border-[#2ec4b6]/40 transition-all duration-200 hover:shadow-lg hover:shadow-teal-500/5">
+    <div className={`relative group bg-[#111827] border-t-2 ${s.border} border border-[#1e2d4a] rounded-xl p-5 hover:border-[#2ec4b6]/40 transition-all duration-200 hover:shadow-lg hover:shadow-teal-500/5`}>
+      <div className="absolute inset-0 bg-gradient-to-br from-white/[0.01] to-transparent pointer-events-none rounded-xl" />
+
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${s.dot} mt-0.5 shrink-0`} />
@@ -141,15 +150,9 @@ function ProjectCard({ project, onDelete, onRename }: {
               autoFocus
               value={editingName}
               onChange={e => setEditingName(e.target.value)}
-              onBlur={() => {
-                onRename(project.id, editingName)
-                setEditingName(null)
-              }}
+              onBlur={() => { onRename(project.id, editingName); setEditingName(null) }}
               onKeyDown={e => {
-                if (e.key === 'Enter') {
-                  onRename(project.id, editingName)
-                  setEditingName(null)
-                }
+                if (e.key === 'Enter') { onRename(project.id, editingName); setEditingName(null) }
                 if (e.key === 'Escape') setEditingName(null)
               }}
               className="text-sm font-semibold bg-transparent border-b border-[#2ec4b6] text-white focus:outline-none w-36"
@@ -170,9 +173,10 @@ function ProjectCard({ project, onDelete, onRename }: {
       <p className="text-xs text-[#7b8db0] mb-4 leading-relaxed line-clamp-2">{project.description}</p>
 
       <div className="flex items-center gap-4 text-xs text-[#3a4a6b] mb-4">
-        <span className="flex items-center gap-1.5">
-          <GitBranch size={11} className="text-[#2ec4b6]" />
-          {project.workflows?.length || 0} workflow{(project.workflows?.length || 0) !== 1 ? 's' : ''}
+        <span className="flex items-center gap-1.5 bg-[#2ec4b6]/5 border border-[#2ec4b6]/10 px-2 py-1 rounded-lg">
+          <GitBranch size={10} className="text-[#2ec4b6]" />
+          <span className="text-[#2ec4b6]">{project.workflows?.length || 0}</span>
+          <span>workflow{(project.workflows?.length || 0) !== 1 ? 's' : ''}</span>
         </span>
         <span className="flex items-center gap-1.5">
           <Clock size={11} />
@@ -187,7 +191,11 @@ function ProjectCard({ project, onDelete, onRename }: {
       <div className="flex gap-2 pt-3 border-t border-[#1e2d4a]">
         <button
           onClick={() => setShowWorkflows(!showWorkflows)}
-          className="flex items-center gap-1.5 text-xs text-[#7b8db0] hover:text-[#2ec4b6] transition-colors px-2 py-1 rounded hover:bg-teal-500/5"
+          className={`flex items-center gap-1.5 text-xs font-medium transition-all px-3 py-1.5 rounded-lg ${
+            showWorkflows
+              ? 'bg-[#2ec4b6]/10 text-[#2ec4b6] border border-[#2ec4b6]/20'
+              : 'text-[#7b8db0] hover:text-[#2ec4b6] hover:bg-teal-500/5'
+          }`}
         >
           <ChevronRight size={12} className={`transition-transform ${showWorkflows ? 'rotate-90' : ''}`} />
           View Workflows
@@ -263,37 +271,56 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0e1a]">
-      <header className="border-b border-[#1e2d4a] px-6 py-3 flex items-center justify-between">
+    <div className="min-h-screen bg-[#0a0e1a] grid-bg">
+      <header className="border-b border-[#1e2d4a] px-6 py-3 flex items-center justify-between sticky top-0 z-10 glass">
         <div className="flex items-center gap-3">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#e63946] to-[#2ec4b6] flex items-center justify-center">
             <Zap size={14} className="text-white" />
           </div>
-          <span className="font-semibold text-white tracking-tight">AutoMend</span>
-          <span className="text-[#3a4a6b] text-xs font-mono">v1.0</span>
+          <span className="font-bold text-white tracking-tight">Auto<span className="gradient-text">Mend</span></span>
+          <span className="text-[#3a4a6b] text-xs font-mono bg-[#1e2d4a] px-2 py-0.5 rounded-full">v1.0</span>
         </div>
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 px-3.5 py-2 bg-[#2ec4b6] text-[#0a0e1a] text-sm font-medium rounded-lg hover:bg-[#25a99d] transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#2ec4b6] to-[#3a86ff] text-white text-sm font-medium rounded-xl hover:opacity-90 transition-opacity shadow-lg shadow-teal-500/20"
         >
           <Plus size={15} /> New Project
         </button>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-8">
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-white mb-1">Projects</h1>
-          <p className="text-sm text-[#7b8db0]">Manage your MLOps models and remediation workflows</p>
+      <div className="hero-gradient px-6 pt-10 pb-6 max-w-6xl mx-auto text-center">
+        <h1 className="text-3xl font-bold text-white mb-3">
+          From Alert to Action <span className="gradient-text">in Seconds</span>
+        </h1>
+        <p className="text-sm text-[#7b8db0] max-w-lg mx-auto">
+          AutoMend automatically detects anomalies in your ML models and triggers the<br />
+          right remediation workflow — no manual intervention needed.
+        </p>
+        <div className="flex gap-6 mt-5 justify-center">
+          {[
+            { label: 'Active Projects', value: counts.active },
+            { label: 'Total Workflows', value: projects.reduce((acc, p) => acc + (p.workflows?.length || 0), 0) },
+            { label: 'Draft Projects', value: counts.draft },
+          ].map(stat => (
+            <div key={stat.label} className="flex items-center gap-2">
+              <span className="text-xl font-bold text-white">{stat.value}</span>
+              <span className="text-xs text-[#7b8db0]">{stat.label}</span>
+            </div>
+          ))}
         </div>
+      </div>
 
+      <main className="max-w-6xl mx-auto px-6 pb-12">
         <div className="flex items-center gap-3 mb-6 flex-wrap">
-          <div className="flex gap-1 bg-[#111827] border border-[#1e2d4a] rounded-lg p-1">
+          <div className="flex gap-1 bg-[#111827] border border-[#1e2d4a] rounded-xl p-1">
             {(['all', 'active', 'paused', 'draft'] as const).map(f => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={`px-3 py-1.5 text-xs rounded-md capitalize transition-colors ${
-                  filter === f ? 'bg-[#1e2d4a] text-white' : 'text-[#7b8db0] hover:text-white'
+                className={`px-3 py-1.5 text-xs rounded-lg capitalize transition-all ${
+                  filter === f
+                    ? 'bg-gradient-to-r from-[#2ec4b6]/20 to-[#3a86ff]/20 text-white border border-[#2ec4b6]/20'
+                    : 'text-[#7b8db0] hover:text-white'
                 }`}
               >
                 {f} <span className="opacity-60 ml-1">{counts[f]}</span>
@@ -304,14 +331,18 @@ export default function HomePage() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search projects..."
-            className="flex-1 max-w-xs bg-[#111827] border border-[#1e2d4a] rounded-lg px-3 py-2 text-sm text-white placeholder-[#3a4a6b] focus:outline-none focus:border-[#2ec4b6] transition-colors"
+            className="flex-1 max-w-xs bg-[#111827] border border-[#1e2d4a] rounded-xl px-3 py-2 text-sm text-white placeholder-[#3a4a6b] focus:outline-none focus:border-[#2ec4b6] transition-colors"
           />
+          <span className="text-xs text-[#3a4a6b] ml-auto">{filtered.length} project{filtered.length !== 1 ? 's' : ''}</span>
         </div>
 
         {filtered.length === 0 ? (
           <div className="text-center py-20 text-[#3a4a6b]">
-            <Zap size={32} className="mx-auto mb-3 opacity-30" />
-            <p className="text-sm">No projects found</p>
+            <div className="w-16 h-16 rounded-2xl border border-dashed border-[#1e2d4a] flex items-center justify-center mx-auto mb-4">
+              <Zap size={24} className="opacity-30" />
+            </div>
+            <p className="text-sm font-medium text-[#7b8db0]">No projects found</p>
+            <p className="text-xs mt-1">Try adjusting your search or filters</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -325,12 +356,15 @@ export default function HomePage() {
             ))}
             <button
               onClick={() => setShowModal(true)}
-              className="border border-dashed border-[#1e2d4a] rounded-xl p-5 flex flex-col items-center justify-center gap-2 text-[#3a4a6b] hover:border-[#2ec4b6]/50 hover:text-[#2ec4b6] transition-all min-h-[180px] group"
+              className="border border-dashed border-[#1e2d4a] rounded-xl p-5 flex flex-col items-center justify-center gap-3 text-[#3a4a6b] hover:border-[#2ec4b6]/50 hover:text-[#2ec4b6] transition-all min-h-[180px] group"
             >
-              <div className="w-10 h-10 rounded-full border border-dashed border-current flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Plus size={18} />
+              <div className="w-12 h-12 rounded-2xl border border-dashed border-current flex items-center justify-center group-hover:scale-110 group-hover:bg-[#2ec4b6]/10 transition-all">
+                <Plus size={20} />
               </div>
-              <span className="text-sm font-medium">Add New Project</span>
+              <div className="text-center">
+                <p className="text-sm font-medium">New Project</p>
+                <p className="text-xs opacity-60 mt-0.5">Add a model to monitor</p>
+              </div>
             </button>
           </div>
         )}

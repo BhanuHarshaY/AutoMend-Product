@@ -12,6 +12,60 @@ body {
   font-family: 'DM Sans', sans-serif;
 }
 
+/* Animated grid background */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(46, 196, 182, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 196, 182, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Hero gradient */
+.hero-gradient {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(46, 196, 182, 0.15) 0%, transparent 60%),
+              radial-gradient(ellipse 60% 40% at 80% 50%, rgba(230, 57, 70, 0.08) 0%, transparent 50%);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #2ec4b6 0%, #3a86ff 50%, #e63946 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Card glow effects */
+.card-active { border-top: 2px solid #2ec4b6; }
+.card-paused { border-top: 2px solid #ffbe0b; }
+.card-draft  { border-top: 2px solid #3a4a6b; }
+
+/* Glassmorphism */
+.glass {
+  background: rgba(17, 24, 39, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Floating animation */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+.float { animation: float 4s ease-in-out infinite; }
+
+/* Pulse glow */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(46, 196, 182, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(46, 196, 182, 0); }
+}
+.pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+
+/* Shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
 /* ReactFlow overrides */
 .react-flow__background { background: #0a0e1a; }
 .react-flow__edge-path { stroke: #2ec4b6; stroke-width: 2; }
