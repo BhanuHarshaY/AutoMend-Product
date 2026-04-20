@@ -44,8 +44,8 @@ spec:
       # envFrom reference below gives us POSTGRES_HOST/PORT/USER/PASSWORD/DB.
       initContainers:
         - name: wait-for-postgres
-          image: "{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag | default .Values.global.imageTag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.migrations.image.pullPolicy | default .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          image: {{ include "automend.image" (dict "ctx" . "component" .Values.migrations) }}
+          imagePullPolicy: {{ include "automend.imagePullPolicy" (dict "ctx" . "component" .Values.migrations) }}
           envFrom:
             - configMapRef:
                 name: {{ include "automend.configMapName" . }}
@@ -69,8 +69,8 @@ spec:
               exit 1
       containers:
         - name: migrate
-          image: "{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag | default .Values.global.imageTag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.migrations.image.pullPolicy | default .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          image: {{ include "automend.image" (dict "ctx" . "component" .Values.migrations) }}
+          imagePullPolicy: {{ include "automend.imagePullPolicy" (dict "ctx" . "component" .Values.migrations) }}
           envFrom:
             - configMapRef:
                 name: {{ include "automend.configMapName" . }}
