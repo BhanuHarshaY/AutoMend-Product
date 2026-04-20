@@ -39,6 +39,40 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.api.podSecurityContext | nindent 8 }}
+      {{- /*
+          Architect model pull initContainer — same pattern as classifier
+          (see classifier-deployment.yaml). When `modelStorage.enabled` and
+          an `architect` component is declared, pulls `gs://BUCKET/PREFIX/`
+          into an emptyDir mounted at `mountPath` in the api container.
+          Current architect path is Gemini API so these weights aren't
+          consumed yet — the plumbing is here for the future switch to a
+          local Qwen-backed architect.
+      */}}
+      {{- $cfg := (.Values.modelStorage | default dict) -}}
+      {{- $comp := (dict) -}}
+      {{- if and $cfg.enabled $cfg.components }}
+      {{- $comp = (default dict $cfg.components.architect) -}}
+      {{- end }}
+      {{- if and $cfg.enabled $cfg.bucket $comp.prefix }}
+      initContainers:
+        - name: fetch-models
+          image: google/cloud-sdk:slim
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Fetching architect models from gs://{{ $cfg.bucket }}/{{ $comp.prefix }}/ …"
+              mkdir -p {{ $comp.mountPath }}
+              gcloud storage cp -r "gs://{{ $cfg.bucket }}/{{ $comp.prefix }}/*" "{{ $comp.mountPath }}/" || {
+                echo "No objects found at gs://{{ $cfg.bucket }}/{{ $comp.prefix }}/ — continuing (architect still resolves to Gemini or local proxy via AUTOMEND_ARCHITECT_*)"
+              }
+              echo "Populated {{ $comp.mountPath }}:"
+              ls -la {{ $comp.mountPath }} || true
+          volumeMounts:
+            - name: models
+              mountPath: {{ $comp.mountPath }}
+      {{- end }}
       containers:
         - name: api
           image: {{ include "automend.image" (dict "ctx" . "component" .Values.api) }}
@@ -54,9 +88,22 @@ spec:
                 name: {{ include "automend.configMapName" . }}
             - secretRef:
                 name: {{ include "automend.secretName" . }}
+          {{- if and $cfg.enabled $cfg.bucket $comp.prefix }}
+          volumeMounts:
+            - name: models
+              mountPath: {{ $comp.mountPath }}
+              readOnly: true
+          env:
+            - name: ARCHITECT_MODEL_DIR
+              value: {{ $comp.mountPath | quote }}
+            {{- with .Values.api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- else }}
           {{- with .Values.api.extraEnv }}
           env:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
           readinessProbe:
             httpGet:
@@ -76,6 +123,13 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
+      {{- if and $cfg.enabled $cfg.bucket $comp.prefix }}
+      volumes:
+        - name: models
+          emptyDir:
+            # Qwen-2.5-0.5B ≈ 1 GB; bump for 7B variants.
+            sizeLimit: 20Gi
+      {{- end }}
       {{- with .Values.api.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

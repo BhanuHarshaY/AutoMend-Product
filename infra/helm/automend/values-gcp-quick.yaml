@@ -104,6 +104,42 @@ rbac:
     - default
 
 # -----------------------------------------------------------------------------
+# Workload Identity binding — links the k8s ServiceAccount to the GCP app SA
+# so pod initContainers (model fetch, secret access, Cloud SQL Auth Proxy, …)
+# can mint GCP tokens without a JSON key. The email comes from the Terraform
+# output `app_service_account_email`. Flip to your actual value via:
+#   --set serviceAccount.annotations."iam\.gke\.io/gcp-service-account=automend-app@PROJECT.iam.gserviceaccount.com"
+# -----------------------------------------------------------------------------
+serviceAccount:
+  annotations: {}
+  # iam.gke.io/gcp-service-account: automend-app@YOUR-PROJECT.iam.gserviceaccount.com
+
+# -----------------------------------------------------------------------------
+# Model artifacts — pulled from GCS by pod initContainers on startup.
+#
+# enabled: true here, bucket empty by default. The chart templates require
+# BOTH `enabled` AND `bucket` to be populated before rendering the init-
+# Container, so an empty bucket is a safe no-op — pods come up on the regex-
+# stub / Gemini path.
+#
+# CI injects the bucket via `--set modelStorage.bucket=${{ secrets.MODELS_BUCKET }}`
+# from a GitHub secret (see .github/workflows/build-and-deploy.yaml). For
+# manual helm runs, either:
+#   --set modelStorage.bucket=$(terraform -chdir=infra/terraform output -raw models_bucket_name)
+# or put the bucket name in a local overlay file and `-f overlay.yaml`.
+# -----------------------------------------------------------------------------
+modelStorage:
+  enabled: true
+  bucket: ""
+  components:
+    classifier:
+      prefix: "classifier"
+      mountPath: "/models/classifier"
+    architect:
+      prefix: "architect"
+      mountPath: "/models/architect"
+
+# -----------------------------------------------------------------------------
 # Ingress — GKE's managed GCLB via the `gce` class. Set .host to whatever
 # DNS name (or nip.io) you want to front the service with. TLS is left off
 # for speed; add a ManagedCertificate annotation later.

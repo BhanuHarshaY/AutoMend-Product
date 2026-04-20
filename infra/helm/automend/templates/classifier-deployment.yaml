@@ -34,6 +34,42 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.classifier.podSecurityContext | nindent 8 }}
+      {{- /*
+          Model pull initContainer (Phase 12 follow-up). When
+          `modelStorage.enabled` and a `classifier` component is declared,
+          we mount an emptyDir at the component's mountPath and an
+          initContainer runs `gcloud storage cp -r` to populate it before
+          the main classifier container starts.
+      */}}
+      {{- $cfg := (.Values.modelStorage | default dict) -}}
+      {{- $comp := (dict) -}}
+      {{- if and $cfg.enabled $cfg.components }}
+      {{- $comp = (default dict $cfg.components.classifier) -}}
+      {{- end }}
+      {{- if and $cfg.enabled $cfg.bucket $comp.prefix }}
+      initContainers:
+        - name: fetch-models
+          # google/cloud-sdk ships a small image with `gcloud storage`. Pod
+          # inherits Workload Identity from the app ServiceAccount, which
+          # has `storage.objectViewer` on the bucket (granted by the
+          # `model-storage` Terraform module).
+          image: google/cloud-sdk:slim
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Fetching classifier models from gs://{{ $cfg.bucket }}/{{ $comp.prefix }}/ …"
+              mkdir -p {{ $comp.mountPath }}
+              gcloud storage cp -r "gs://{{ $cfg.bucket }}/{{ $comp.prefix }}/*" "{{ $comp.mountPath }}/" || {
+                echo "No objects found at gs://{{ $cfg.bucket }}/{{ $comp.prefix }}/ — continuing with empty dir (classifier falls back to regex stub)"
+              }
+              echo "Populated {{ $comp.mountPath }}:"
+              ls -la {{ $comp.mountPath }} || true
+          volumeMounts:
+            - name: models
+              mountPath: {{ $comp.mountPath }}
+      {{- end }}
       containers:
         - name: classifier
           image: {{ include "automend.image" (dict "ctx" . "component" .Values.classifier) }}
@@ -51,9 +87,22 @@ spec:
                 name: {{ include "automend.configMapName" . }}
             - secretRef:
                 name: {{ include "automend.secretName" . }}
+          {{- if and $cfg.enabled $cfg.bucket $comp.prefix }}
+          volumeMounts:
+            - name: models
+              mountPath: {{ $comp.mountPath }}
+              readOnly: true
+          env:
+            - name: CLASSIFIER_MODEL_DIR
+              value: {{ $comp.mountPath | quote }}
+            {{- with .Values.classifier.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- else }}
           {{- with .Values.classifier.extraEnv }}
           env:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
           readinessProbe:
             httpGet:
@@ -73,6 +122,14 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.classifier.resources | nindent 12 }}
+      {{- if and $cfg.enabled $cfg.bucket $comp.prefix }}
+      volumes:
+        - name: models
+          emptyDir:
+            # Classifier models are small (<1 GB for RoBERTa-base). For
+            # 7B-class weights bump this or switch to a PVC.
+            sizeLimit: 2Gi
+      {{- end }}
       {{- with .Values.classifier.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
