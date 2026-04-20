@@ -179,8 +179,10 @@ jobs:
               --region "$LOCATION" --project "$PROJECT_ID" \
               --no-enable-master-authorized-networks
           else
+            # gcloud requires both flags together when mutating the list.
             gcloud container clusters update "$CLUSTER" \
               --region "$LOCATION" --project "$PROJECT_ID" \
+              --enable-master-authorized-networks \
               --master-authorized-networks="$PRUNED"
           fi
           echo "Removed $RUNNER_IP/32 — remaining: ${PRUNED:-(disabled)}"
