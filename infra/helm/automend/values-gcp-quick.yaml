@@ -94,8 +94,13 @@ config:
 # -----------------------------------------------------------------------------
 rbac:
   clusterWide: true
+  # Only `default` is guaranteed to exist on a fresh cluster. Add entries as
+  # you create target namespaces (`kubectl create namespace ml`, etc.), then
+  # `helm upgrade --set rbac.targetNamespaces={default,ml,...}` to rebind.
+  # clusterWide: true above already grants cluster-scoped deployment/pod
+  # access — per-ns Roles are a tighter-scope alternative when clusterWide
+  # is false.
   targetNamespaces:
-    - ml
     - default
 
 # -----------------------------------------------------------------------------
