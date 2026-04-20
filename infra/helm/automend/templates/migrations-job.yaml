@@ -1,0 +1,100 @@
+{{- /*
+    migrations-job.yaml — runs `alembic upgrade head` (+ seed scripts)
+    as a Helm post-install / post-upgrade hook. Uses the API image since
+    it has alembic + the seed scripts baked in.
+
+    Works with both the in-cluster postgres-dev.yaml Pod and external
+    Cloud SQL instances (Phase 12) — just reads the same AUTOMEND_POSTGRES_*
+    env vars the app itself uses.
+
+    hook-succeeded delete policy keeps the cluster clean — each install/upgrade
+    leaves behind no Job objects. If you need to debug a failed migration, set
+    the annotation to `before-hook-creation` (keeps the last failed Job for
+    inspection).
+*/ -}}
+{{- if .Values.migrations.enabled -}}
+{{- $component := "migrations" -}}
+{{- $fullname := printf "%s-migrations" (include "automend.fullname" .) -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      enableServiceLinks: false   # avoid AUTOMEND_*_PORT env clobbering pydantic-settings
+      serviceAccountName: {{ include "automend.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Wait for Postgres to accept connections before running alembic. The
+      # envFrom reference below gives us POSTGRES_HOST/PORT/USER/PASSWORD/DB.
+      initContainers:
+        - name: wait-for-postgres
+          image: "{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag | default .Values.global.imageTag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.migrations.image.pullPolicy | default .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "automend.configMapName" . }}
+            - secretRef:
+                name: {{ include "automend.secretName" . }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for postgres at ${AUTOMEND_POSTGRES_HOST}:${AUTOMEND_POSTGRES_PORT}..."
+              for i in $(seq 1 60); do
+                if python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('${AUTOMEND_POSTGRES_HOST}', int('${AUTOMEND_POSTGRES_PORT}'))); s.close()" 2>/dev/null; then
+                  echo "Postgres reachable."
+                  exit 0
+                fi
+                echo "  attempt $i/60 — not ready yet, sleeping 2s"
+                sleep 2
+              done
+              echo "Postgres did not become reachable within 120s"
+              exit 1
+      containers:
+        - name: migrate
+          image: "{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag | default .Values.global.imageTag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.migrations.image.pullPolicy | default .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "automend.configMapName" . }}
+            - secretRef:
+                name: {{ include "automend.secretName" . }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              # Dockerfile.api runs `pip install .` before COPY-ing sources so
+              # the `app` package isn't installed as a module. uvicorn works
+              # around this because it adds CWD to sys.path at runtime; alembic
+              # (a console_script) doesn't. Explicit PYTHONPATH fixes it for
+              # both alembic and the seed scripts.
+              export PYTHONPATH=/app:${PYTHONPATH:-}
+              echo "Running alembic upgrade head..."
+              alembic upgrade head
+              {{- if .Values.migrations.seedToolsAndRules }}
+              echo "Seeding tools..."
+              python scripts/seed_tools.py
+              echo "Seeding alert rules..."
+              python scripts/seed_rules.py
+              {{- end }}
+              echo "Migrations + seed complete."
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+{{- end -}}

@@ -1,0 +1,51 @@
+# Applies when the Docker build context is the repo root — currently only the
+# frontend Dockerfile uses the root as context. Backend Dockerfiles use
+# context: ../backend and are unaffected.
+
+# Node / Next.js build artifacts — rebuilt inside the image
+node_modules
+.next
+out
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Editor / OS clutter
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Python / backend — the frontend image doesn't need any of this
+backend
+inference_backend
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+
+# Infra / deploy — not needed in the frontend runtime image
+infra
+
+# Docs + planning
+*.md
+!README.md
+
+# Environment files — secrets don't belong in images
+.env
+.env.local
+.env.*.local
+
+# Test output
+coverage
+.coverage
+
+# Logs
+*.log
+npm-debug.log*

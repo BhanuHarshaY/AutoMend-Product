@@ -1,0 +1,76 @@
+{{- if .Values.windowWorker.enabled }}
+{{- $component := "window-worker" -}}
+{{- $fullname := include "automend.componentFullname" (dict "ctx" . "component" $component) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  replicas: {{ .Values.windowWorker.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  selector:
+    matchLabels:
+      {{- include "automend.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 8 }}
+      {{- with .Values.windowWorker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      enableServiceLinks: false   # avoid AUTOMEND_*_PORT env clobbering pydantic-settings
+      serviceAccountName: {{ include "automend.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.windowWorker.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "automend.image" (dict "ctx" . "component" .Values.windowWorker) }}
+          imagePullPolicy: {{ include "automend.imagePullPolicy" (dict "ctx" . "component" .Values.windowWorker) }}
+          securityContext:
+            {{- toYaml .Values.windowWorker.containerSecurityContext | nindent 12 }}
+          command: ["python", "main_window_worker.py"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "automend.configMapName" . }}
+            - secretRef:
+                name: {{ include "automend.secretName" . }}
+          {{- with .Values.windowWorker.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.windowWorker.resources | nindent 12 }}
+      {{- with .Values.windowWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.windowWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        {{- if .Values.windowWorker.affinity }}
+        {{- toYaml .Values.windowWorker.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "automend.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 20 }}
+        {{- end }}
+{{- end }}

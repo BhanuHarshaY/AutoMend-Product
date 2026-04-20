@@ -1,0 +1,92 @@
+# ---------------------------------------------------------------------------
+# Dockerfile.frontend — Next.js 14 (standalone output)
+#
+# Build from the repo root:
+#   docker build -t automend/frontend:dev \
+#     -f infra/dockerfiles/Dockerfile.frontend .
+#
+# Three stages:
+#   deps    — install node_modules from the lockfile only (maximises layer cache)
+#   builder — full source + `next build` (outputs .next/standalone + .next/static)
+#   runner  — minimal runtime image; non-root, only the artifacts needed at runtime
+#
+# Base image: node:20-slim (Debian + glibc). We use the glibc-native image
+# instead of node:20-alpine because Next.js's SWC compiler ships a musl-variant
+# optional dep (@next/swc-linux-x64-musl) that isn't always pinned by
+# package-lock.json files generated on Windows/macOS — which causes
+# "Failed to load SWC binary" at build time on Alpine. Debian-slim costs ~50MB
+# but avoids the musl-vs-glibc trap entirely.
+# ---------------------------------------------------------------------------
+
+ARG NODE_VERSION=20-slim
+
+# =========================
+# Stage 1: dependencies
+# =========================
+FROM node:${NODE_VERSION} AS deps
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+
+
+# =========================
+# Stage 2: build
+# =========================
+FROM node:${NODE_VERSION} AS builder
+WORKDIR /app
+
+# Compile-time API base URL for `NEXT_PUBLIC_*` vars (baked into client bundle).
+# Empty string = same-origin calls via the standalone server's `rewrites()`.
+ARG NEXT_PUBLIC_API_BASE_URL=""
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+
+# Next.js standalone mode serializes rewrites() into routes-manifest.json at
+# `next build` time — runtime env changes to API_PROXY_TARGET are ignored.
+# So the proxy target has to be baked in here. Default matches the helm
+# chart's cluster-internal service name; override via --build-arg when
+# deploying to different targets (GCP Ingress, for example).
+ARG API_PROXY_TARGET="http://automend-api:8000"
+ENV API_PROXY_TARGET=${API_PROXY_TARGET}
+
+# Telemetry adds latency to the build and writes to ~/.next — disable in CI.
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+RUN npm run build
+
+
+# =========================
+# Stage 3: runtime
+# =========================
+FROM node:${NODE_VERSION} AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# Non-root user. Debian's node:20-slim ships a `node` user at UID 1000; create
+# a dedicated nextjs user to avoid colliding with host-mounted volumes that
+# happen to share UID 1000.
+RUN groupadd --system --gid 1001 nodejs \
+ && useradd  --system --uid 1001 --gid nodejs --create-home nextjs
+
+# Next.js standalone output carries only the node_modules and files actually
+# needed at runtime. Static assets are copied separately because they live
+# outside the standalone directory. This project has no `public/` directory
+# (no static assets like favicons / images), so we skip that COPY — the
+# builder stage wouldn't have it to copy anyway.
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+
+# `server.js` is emitted inside .next/standalone by Next.js and listens on
+# HOSTNAME:PORT. The ./ COPY above places it at /app/server.js.
+CMD ["node", "server.js"]

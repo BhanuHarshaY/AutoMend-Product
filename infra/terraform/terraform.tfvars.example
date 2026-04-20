@@ -1,0 +1,39 @@
+# Copy to terraform.tfvars (gitignored) and fill in. terraform.tfvars is
+# auto-loaded by every `terraform plan` / `apply` without needing
+# `-var-file` flags.
+
+project_id  = "your-gcp-project-id"     # e.g. "automend-prod-2026"
+region      = "us-central1"             # matches values-gcp-quick.yaml region
+zone        = "us-central1-a"
+env         = "dev"                     # dev | staging | prod
+name_prefix = "automend"                # drop to "am" or similar if hitting name-length caps
+
+# --- Network (Task 12.2 defaults are fine for most setups) ---
+# subnet_cidr            = "10.10.0.0/20"
+# pod_cidr               = "10.20.0.0/16"
+# service_cidr           = "10.30.0.0/20"
+# master_ipv4_cidr_block = "172.16.0.0/28"
+
+# Add your own CIDR here to kubectl directly against the master from your laptop.
+# Leave empty to force `gcloud container clusters get-credentials` (routes
+# through GCP's proxy, no master IP exposure needed).
+# master_authorized_networks = [
+#   { cidr_block = "203.0.113.0/24", display_name = "office" },
+# ]
+
+# --- GKE sizing ---
+# gke_node_count   = 1   # NOTE: this is PER-ZONE — regional cluster = 3 nodes total at node_count=1
+# gke_machine_type = "e2-standard-4"
+
+# --- Cloud SQL sizing (Task 12.3) ---
+# cloudsql_tier          = "db-custom-2-7680"    # 2 vCPU / 7.5 GB (dev). db-custom-4-15360 for prod.
+# cloudsql_disk_size_gb  = 20                     # autoresize caps at 100 GB
+
+# --- Memorystore sizing (Task 12.4) ---
+# memorystore_tier            = "STANDARD_HA"    # "BASIC" halves the cost for dev; prod is forced to STANDARD_HA regardless.
+# memorystore_memory_size_gb  = 1                 # STANDARD_HA minimum; bump for real traffic.
+
+# --- CI/CD via Workload Identity Federation (Task 12.5) ---
+# Set to your GitHub repo to enable WIF + auto-generate the CI service
+# account. Leave empty to skip (manual docker push / no CI).
+# github_repository = "YOUR-ORG/YOUR-REPO"       # e.g. "raghav52524/automend-ui-"

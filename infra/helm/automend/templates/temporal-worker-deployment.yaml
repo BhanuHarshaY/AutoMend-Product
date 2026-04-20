@@ -1,0 +1,84 @@
+{{- if .Values.temporalWorker.enabled }}
+{{- $component := "temporal-worker" -}}
+{{- $fullname := include "automend.componentFullname" (dict "ctx" . "component" $component) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  replicas: {{ .Values.temporalWorker.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  selector:
+    matchLabels:
+      {{- include "automend.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 8 }}
+      {{- with .Values.temporalWorker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      enableServiceLinks: false   # avoid AUTOMEND_*_PORT env clobbering pydantic-settings
+      serviceAccountName: {{ include "automend.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.temporalWorker.podSecurityContext | nindent 8 }}
+      containers:
+        - name: temporal-worker
+          image: {{ include "automend.image" (dict "ctx" . "component" .Values.temporalWorker) }}
+          imagePullPolicy: {{ include "automend.imagePullPolicy" (dict "ctx" . "component" .Values.temporalWorker) }}
+          securityContext:
+            {{- toYaml .Values.temporalWorker.containerSecurityContext | nindent 12 }}
+          # Uses the Dockerfile.temporal-worker default CMD
+          # (python main_temporal_worker.py)
+          envFrom:
+            - configMapRef:
+                name: {{ include "automend.configMapName" . }}
+            - secretRef:
+                name: {{ include "automend.secretName" . }}
+          {{- with .Values.temporalWorker.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.temporalWorker.resources | nindent 12 }}
+      {{- with .Values.temporalWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.temporalWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        {{- if .Values.temporalWorker.affinity }}
+        {{- toYaml .Values.temporalWorker.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "automend.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 20 }}
+        {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "automend.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 14 }}
+{{- end }}

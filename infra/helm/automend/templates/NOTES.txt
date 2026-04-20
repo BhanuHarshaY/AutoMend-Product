@@ -1,0 +1,61 @@
+AutoMend has been deployed as release {{ .Release.Name | quote }} in namespace
+{{ .Release.Namespace | quote }}.
+
+{{- if .Values.ingress.enabled }}
+
+Frontend + API
+--------------
+  URL:  http://{{ .Values.ingress.host }}/
+
+  If running on kind / minikube, add to /etc/hosts first:
+    127.0.0.1  {{ .Values.ingress.host }}
+
+  Or port-forward the Ingress controller:
+    kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8080:80
+    # Then open http://localhost:8080/ (set Host header via browser extension)
+{{- else }}
+
+Ingress is disabled. Reach the services directly via port-forward:
+
+  # Frontend
+  kubectl port-forward -n {{ .Release.Namespace }} \
+    svc/{{ include "automend.componentFullname" (dict "ctx" . "component" "frontend") }} \
+    3000:{{ .Values.frontend.service.port }}
+
+  # API
+  kubectl port-forward -n {{ .Release.Namespace }} \
+    svc/{{ include "automend.componentFullname" (dict "ctx" . "component" "api") }} \
+    8000:{{ .Values.api.service.port }}
+
+Then open:
+  Frontend:  http://localhost:3000
+  API docs:  http://localhost:8000/docs
+{{- end }}
+
+Default admin login
+-------------------
+{{- if .Values.secrets.create }}
+  The chart does NOT auto-create a user. Bootstrap an admin after install:
+
+    # Once per cluster — creates an admin@local / admin123 user
+    kubectl exec -n {{ .Release.Namespace }} deployment/{{ include "automend.componentFullname" (dict "ctx" . "component" "api") }} -- \
+      env ADMIN_EMAIL=admin@local ADMIN_PASSWORD=admin123 \
+      python scripts/bootstrap_admin.py
+{{- else }}
+  Admin user must be seeded externally (chart does not bundle credential
+  bootstrap when `secrets.create=false`).
+{{- end }}
+
+Next steps
+----------
+  # Watch the rollout
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "automend.componentFullname" (dict "ctx" . "component" "api") }}
+
+  # Tail logs for a specific component
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=api -f
+
+  # Full walkthrough (local kind flow):
+  #   https://github.com/your-org/automend/blob/main/MANUAL_TESTING.md
+
+  # Run the chart's smoke tests (Task 11.6 — not in this scaffolding release):
+  #   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

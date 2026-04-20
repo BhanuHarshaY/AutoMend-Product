@@ -1,0 +1,241 @@
+AutoMend — Architecture Diagrams
+================================
+
+Two Mermaid diagrams below: (1) Frontend, (2) Backend + Data/Inference planes.
+Models in use: RoBERTa-base (classifier, :8001) and Qwen 3.5 (architect, vLLM).
+
+
+================================================================================
+1) FRONTEND ARCHITECTURE (Next.js 14 App Router + React 18 + ReactFlow)
+================================================================================
+
+```mermaid
+flowchart TB
+    User_Browser([User / Browser])
+
+    subgraph NextJsApp["Next.js App (src/app)"]
+        direction TB
+        RootLayout["Root Layout<br/>layout.tsx"]
+        AppShellWrapper["AppShell.tsx<br/>AuthProvider + AuthGuard"]
+
+        subgraph ApplicationPages["Application Pages"]
+            LoginPage["Login Page<br/>/login"]
+            ProjectsDashboard["Projects Dashboard<br/>/"]
+            IncidentsList["Incidents List<br/>/incidents"]
+            IncidentDetailPage["Incident Detail<br/>/incidents/[id]"]
+            WorkflowBuilder["Playbook Builder<br/>/workflow/[id]"]
+        end
+
+        subgraph ReactComponents["React Components"]
+            WorkflowNodeComponent["WorkflowNode.tsx<br/>ReactFlow custom node"]
+            NodeConfigPanel["NodeConfigPanel.tsx<br/>Step config editor"]
+        end
+    end
+
+    subgraph FrontendLib["src/lib"]
+        direction TB
+        TypedApiClient["api.ts<br/>Typed HTTP client (Bearer JWT)"]
+        AuthContext["auth-context.tsx<br/>useAuth / AuthGuard"]
+        SpecAdapters["adapters.ts<br/>reactFlowToSpec / specToReactFlow"]
+        NodeTypesData["data.ts<br/>NODE_TYPES_CONFIG"]
+    end
+
+    subgraph NextConfigProxy["next.config.js"]
+        ApiRewrite["/api/* rewrite<br/>→ API_PROXY_TARGET"]
+    end
+
+    FastApiBackend[("FastAPI Backend :8000")]
+    IncidentsWebSocket[("WebSocket /api/ws/incidents")]
+
+    User_Browser --> RootLayout
+    RootLayout --> AppShellWrapper
+    AppShellWrapper --> ApplicationPages
+
+    LoginPage --> AuthContext
+    ProjectsDashboard --> TypedApiClient
+    IncidentsList --> TypedApiClient
+    IncidentsList --> IncidentsWebSocket
+    IncidentDetailPage --> TypedApiClient
+    IncidentDetailPage --> IncidentsWebSocket
+    WorkflowBuilder --> WorkflowNodeComponent
+    WorkflowBuilder --> NodeConfigPanel
+    WorkflowBuilder --> SpecAdapters
+    WorkflowBuilder --> TypedApiClient
+
+    AuthContext --> TypedApiClient
+    SpecAdapters --> NodeTypesData
+
+    TypedApiClient --> ApiRewrite
+    IncidentsWebSocket --> ApiRewrite
+    ApiRewrite --> FastApiBackend
+    ApiRewrite --> IncidentsWebSocket
+
+    classDef page fill:#1e3a8a,stroke:#60a5fa,color:#fff
+    classDef lib fill:#064e3b,stroke:#34d399,color:#fff
+    classDef ext fill:#7c2d12,stroke:#fb923c,color:#fff
+    class LoginPage,ProjectsDashboard,IncidentsList,IncidentDetailPage,WorkflowBuilder page
+    class TypedApiClient,AuthContext,SpecAdapters,NodeTypesData lib
+    class FastApiBackend,IncidentsWebSocket ext
+```
+
+
+================================================================================
+2) BACKEND + INFERENCE + DATA PLANES
+================================================================================
+
+```mermaid
+flowchart TB
+    subgraph KubernetesSignals["Kubernetes Cluster Signals"]
+        WorkloadPods["Workload Pods<br/>Deployments / StatefulSets"]
+        FluentBit["Fluent Bit<br/>log collector"]
+        OtelCollector["OpenTelemetry Collector"]
+        Prometheus["Prometheus"]
+        Alertmanager["Alertmanager"]
+        WorkloadPods --> FluentBit --> OtelCollector
+        WorkloadPods --> Prometheus --> Alertmanager
+    end
+
+    subgraph ControlPlane["Control Plane — FastAPI (main_api.py :8000)"]
+        direction TB
+        AuthRoutes["routes_auth<br/>/api/auth"]
+        ProjectsRoutes["routes_projects<br/>/api/projects"]
+        PlaybooksRoutes["routes_playbooks<br/>/api/playbooks"]
+        IncidentsRoutes["routes_incidents<br/>/api/incidents"]
+        WorkflowsRoutes["routes_workflows<br/>/api/workflows"]
+        ClustersRoutes["routes_clusters<br/>/api/clusters"]
+        DesignRoutes["routes_design<br/>RAG + generate + validate"]
+        ToolsRoutes["routes_tools<br/>/api/tools"]
+        RulesRoutes["routes_rules<br/>/api/rules"]
+        WebhooksRoutes["routes_webhooks<br/>/alertmanager /ingest/otlp"]
+        IncidentsWsEndpoint["WS /api/ws/incidents"]
+    end
+
+    subgraph BackendServices["app/services"]
+        ClassifierClient["ClassifierClient"]
+        ArchitectClient["ArchitectClient"]
+        EmbeddingService["EmbeddingService<br/>(OpenAI embeddings)"]
+        VectorSearchService["VectorSearchService<br/>(pgvector)"]
+        K8sClient["K8sClient<br/>(kubernetes_asyncio)"]
+        BroadcastService["BroadcastService<br/>(Redis Pub/Sub)"]
+    end
+
+    subgraph InferenceBackend["Inference Backend"]
+        direction TB
+        RobertaClassifierService["Classifier Service :8001<br/>RoBERTa-base<br/>POST /predict_anomaly<br/>14-label taxonomy"]
+        ArchitectProxyService["Architect Proxy<br/>POST /generate_workflow"]
+        QwenVllmServer["Qwen 3.5 vLLM Server"]
+        ArchitectProxyService --> QwenVllmServer
+    end
+
+    subgraph IntelligencePlane["Intelligence Plane"]
+        WindowWorker["WindowWorker (main_window_worker.py)<br/>5-min rolling windows"]
+        CorrelationWorker["CorrelationWorker (main_correlation_worker.py)<br/>dedup + cooldown + trigger lookup"]
+    end
+
+    subgraph OrchestrationPlane["Orchestration Plane — Temporal"]
+        TemporalServer[("Temporal Server")]
+        TemporalWorker["Temporal Worker<br/>(main_temporal_worker.py)"]
+        DynamicPlaybookExecutor["DynamicPlaybookExecutor<br/>(workflow)"]
+        subgraph TemporalActivities["Activities (18)"]
+            KubernetesActivities["Kubernetes Activities<br/>scale / rollback / restart /<br/>cordon / drain / describe_pod /<br/>fetch_logs"]
+            MonitoringActivities["Monitoring Activities<br/>query_prometheus /<br/>run_diagnostic_script"]
+            NotificationActivities["Notification Activities<br/>slack_notify / slack_approval /<br/>page_oncall / open_ticket"]
+            InfrastructureActivities["Infrastructure Activities<br/>load_playbook / update_incident /<br/>resolve_incident / record_step_result"]
+        end
+        TemporalWorker --> DynamicPlaybookExecutor
+        DynamicPlaybookExecutor --> TemporalActivities
+    end
+
+    subgraph DataPlane["Data Plane"]
+        direction TB
+        PostgresDb[("PostgreSQL + pgvector<br/>users, projects, playbooks,<br/>playbook_versions, trigger_rules,<br/>incidents, incident_events,<br/>classifier_outputs, approval_requests,<br/>tools, alert_rules")]
+        RedisCache[("Redis<br/>Streams: normalized_logs,<br/>classified_events, correlation_input<br/>Pub/Sub: automend:events:*<br/>Dedup / cooldown / locks")]
+        PostgresStore["postgres_store"]
+        RedisStore["redis_store"]
+        PostgresStore --> PostgresDb
+        RedisStore --> RedisCache
+    end
+
+    KubernetesApi[("Kubernetes API Server")]
+    ExternalNotifiers[("Slack / PagerDuty / Jira")]
+    FrontendBrowser([Frontend / Browser])
+
+    FrontendBrowser --> ControlPlane
+    FrontendBrowser -.JWT WS.-> IncidentsWsEndpoint
+
+    %% Ingestion
+    OtelCollector -->|logs| RedisCache
+    Alertmanager -->|webhook| WebhooksRoutes
+    WebhooksRoutes --> RedisCache
+
+    %% Window + classify
+    RedisCache -->|normalized_logs| WindowWorker
+    WindowWorker --> ClassifierClient --> RobertaClassifierService
+    WindowWorker -->|classifier_outputs| PostgresStore
+    WindowWorker -->|classified_events| RedisCache
+
+    %% Correlation
+    RedisCache -->|classified_events + correlation_input| CorrelationWorker
+    CorrelationWorker --> PostgresStore
+    CorrelationWorker -->|playbooks_enabled + TriggerRule| PostgresDb
+    CorrelationWorker -->|start_workflow| TemporalServer
+    CorrelationWorker --> BroadcastService
+
+    %% Temporal execution
+    TemporalServer <--> TemporalWorker
+    KubernetesActivities --> K8sClient --> KubernetesApi
+    MonitoringActivities --> Prometheus
+    NotificationActivities --> ExternalNotifiers
+    InfrastructureActivities --> PostgresStore
+    InfrastructureActivities --> BroadcastService
+
+    %% Design-time AI
+    DesignRoutes --> EmbeddingService --> VectorSearchService --> PostgresDb
+    DesignRoutes --> ArchitectClient --> ArchitectProxyService
+    PlaybooksRoutes --> EmbeddingService
+    PlaybooksRoutes --> PostgresStore
+
+    %% Control-plane data access
+    AuthRoutes --> PostgresStore
+    ProjectsRoutes --> PostgresStore
+    IncidentsRoutes --> PostgresStore
+    RulesRoutes --> PostgresStore
+    ToolsRoutes --> PostgresStore
+    WorkflowsRoutes --> TemporalServer
+    ClustersRoutes --> K8sClient
+
+    %% Broadcast → WS
+    BroadcastService --> RedisCache
+    RedisCache -->|Pub/Sub| IncidentsWsEndpoint
+    IncidentsWsEndpoint -.events.-> FrontendBrowser
+
+    classDef svc fill:#1e3a8a,stroke:#60a5fa,color:#fff
+    classDef ai fill:#581c87,stroke:#c084fc,color:#fff
+    classDef store fill:#064e3b,stroke:#34d399,color:#fff
+    classDef ext fill:#7c2d12,stroke:#fb923c,color:#fff
+    class RobertaClassifierService,QwenVllmServer,ArchitectProxyService,ArchitectClient,ClassifierClient,EmbeddingService,VectorSearchService ai
+    class PostgresDb,RedisCache,PostgresStore,RedisStore store
+    class KubernetesApi,ExternalNotifiers,WorkloadPods,FluentBit,OtelCollector,Prometheus,Alertmanager,TemporalServer ext
+```
+
+
+================================================================================
+Data Flow Summary
+================================================================================
+
+Runtime (logs → remediation):
+  Workload Pods → Fluent Bit → OpenTelemetry Collector → Redis stream `normalized_logs`
+    → WindowWorker (5-min windows) → RoBERTa-base classifier (:8001)
+    → Redis stream `classified_events` + classifier_outputs (Postgres)
+    → CorrelationWorker (dedup, cooldown, TriggerRule lookup, kill-switch check)
+    → Incident row (Postgres) + Temporal DynamicPlaybookExecutor start
+    → Activities execute against Kubernetes API / Prometheus / Slack
+    → BroadcastService → Redis Pub/Sub → WebSocket → Browser
+
+Design-time (intent → playbook):
+  Browser (Playbook Builder) → POST /api/design/generate_workflow
+    → ArchitectClient → Qwen 3.5 vLLM → PlaybookSpec JSON
+    → adapters.specToReactFlow → ReactFlow canvas
+    → user edits → adapters.reactFlowToSpec
+    → POST /api/playbooks/{id}/versions → EmbeddingService → pgvector
+    → TriggerRule binds incident_type → PlaybookVersion

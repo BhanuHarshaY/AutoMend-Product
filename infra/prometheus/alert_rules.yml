@@ -1,0 +1,54 @@
+groups:
+  - name: gpu_alerts
+    rules:
+      - alert: GPUHighMemoryPressure
+        expr: DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL > 0.95
+        for: 5m
+        labels:
+          severity: high
+          incident_type: incident.gpu_memory_failure
+        annotations:
+          summary: "GPU {{ $labels.gpu }} memory usage above 95%"
+          entity_cluster: "{{ $labels.cluster }}"
+          entity_namespace: "{{ $labels.namespace }}"
+          entity_service: "{{ $labels.exported_service }}"
+
+      - alert: GPUHighTemperature
+        expr: DCGM_FI_DEV_GPU_TEMP > 90
+        for: 5m
+        labels:
+          severity: high
+          incident_type: incident.gpu_thermal
+        annotations:
+          summary: "GPU {{ $labels.gpu }} temperature above 90°C"
+
+      - alert: PodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: medium
+          incident_type: incident.pod_crash_loop
+        annotations:
+          summary: "Pod {{ $labels.pod }} in {{ $labels.namespace }} is crash looping"
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (service, namespace)
+          /
+          sum(rate(http_requests_total[5m])) by (service, namespace)
+          > 0.05
+        for: 5m
+        labels:
+          severity: high
+          incident_type: incident.high_error_rate
+        annotations:
+          summary: "Service {{ $labels.service }} error rate above 5%"
+
+      - alert: NodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          incident_type: incident.node_not_ready
+        annotations:
+          summary: "Node {{ $labels.node }} is not ready"

@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "automend.configMapName" . }}
+  labels:
+    {{- include "automend.labels" . | nindent 4 }}
+data:
+  # ---- Application ----
+  AUTOMEND_APP_ENV: {{ .Values.config.appEnv | default "production" | quote }}
+  AUTOMEND_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  AUTOMEND_CORS_ORIGINS: {{ .Values.config.corsOrigins | toJson | quote }}
+
+  # ---- Postgres (subchart or external) ----
+  # Host comes from the helper (subchart service name if postgres.enabled,
+  # else external.postgres.host). Port/user/database share the same keys
+  # across both modes — Task 11.5 configures the bitnami subchart to
+  # create the database using these same values.
+  AUTOMEND_POSTGRES_HOST: {{ include "automend.postgresHost" . | quote }}
+  AUTOMEND_POSTGRES_PORT: {{ .Values.external.postgres.port | quote }}
+  AUTOMEND_POSTGRES_USER: {{ .Values.external.postgres.user | quote }}
+  AUTOMEND_POSTGRES_DB: {{ .Values.external.postgres.database | quote }}
+
+  # ---- Redis (subchart or external) ----
+  AUTOMEND_REDIS_HOST: {{ include "automend.redisHost" . | quote }}
+  AUTOMEND_REDIS_PORT: {{ .Values.external.redis.port | quote }}
+
+  # ---- Temporal (subchart or external) ----
+  AUTOMEND_TEMPORAL_SERVER_URL: {{ include "automend.temporalServerUrl" . | quote }}
+
+  # ---- Classifier (cluster-internal regardless of subcharts) ----
+  AUTOMEND_CLASSIFIER_SERVICE_URL: {{ include "automend.classifierServiceUrl" . | quote }}
+  AUTOMEND_CLASSIFIER_ENDPOINT: {{ .Values.config.classifierEndpoint | quote }}
+  AUTOMEND_CLASSIFIER_CONFIDENCE_THRESHOLD: {{ .Values.config.classifierConfidenceThreshold | quote }}
+
+  # ---- Architect (Model 2) ----
+  AUTOMEND_ARCHITECT_PROVIDER: {{ .Values.config.architectProvider | quote }}
+  AUTOMEND_ARCHITECT_API_BASE_URL: {{ .Values.config.architectApiBaseUrl | quote }}
+  AUTOMEND_ARCHITECT_MODEL: {{ .Values.config.architectModel | quote }}
+  AUTOMEND_ARCHITECT_LOCAL_ENDPOINT: {{ .Values.config.architectLocalEndpoint | quote }}
+
+  # ---- Embeddings ----
+  AUTOMEND_EMBEDDING_API_BASE_URL: {{ .Values.config.embeddingApiBaseUrl | quote }}
+  AUTOMEND_EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
+  AUTOMEND_EMBEDDING_DIMENSIONS: {{ .Values.config.embeddingDimensions | quote }}
+
+  # ---- Window / correlation workers ----
+  AUTOMEND_WINDOW_SIZE_SECONDS: {{ .Values.config.windowSizeSeconds | quote }}
+  AUTOMEND_MAX_WINDOW_ENTRIES: {{ .Values.config.maxWindowEntries | quote }}
+
+  # ---- Auth ----
+  AUTOMEND_JWT_ALGORITHM: {{ .Values.config.jwtAlgorithm | quote }}

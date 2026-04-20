@@ -1,0 +1,38 @@
+apiVersion: v2
+name: automend
+description: |
+  AutoMend — AI-powered MLOps incident remediation platform.
+
+  This chart deploys the full application stack: FastAPI control plane, three
+  Python workers (window / correlation / Temporal), the classifier service,
+  and the Next.js frontend. Optional subcharts for Postgres (with pgvector),
+  Redis, and Temporal are added in Task 11.5; values-local.yaml turns them on
+  for kind / Docker Desktop development, while values-gcp.yaml (Phase 12)
+  keeps them off and points at managed Cloud SQL + Memorystore instances.
+type: application
+
+# Bumped whenever a template-level change ships. Independent of appVersion.
+version: 0.1.0
+
+# Tracks backend/app __version__. Consumed by the default image.tag when
+# global.imageTag is empty.
+appVersion: "1.0.0"
+
+kubeVersion: ">=1.25.0-0"
+
+home: https://github.com/your-org/automend
+sources:
+  - https://github.com/your-org/automend
+
+maintainers:
+  - name: AutoMend Team
+
+keywords:
+  - mlops
+  - incident-response
+  - remediation
+  - kubernetes
+
+# Subchart dependencies are added in Task 11.5 (postgres with pgvector, redis,
+# temporal). The values.yaml already exposes their on/off toggles so the
+# dependency block can land without rearranging the values schema.

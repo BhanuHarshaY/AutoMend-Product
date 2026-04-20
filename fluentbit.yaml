@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: logging
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush        2
+        Log_Level    info
+        Parsers_File parsers.conf
+    [INPUT]
+        Name          tail
+        Path          /var/log/containers/reco-pod*_ml_*.log,/var/log/containers/fraud-api*_payments_*.log,/var/log/containers/indexer*_search-index_*.log
+        Parser        cri
+        Tag           kube.*
+        Read_from_Head false
+    [FILTER]
+        # Enrich each record with k8s metadata (namespace, pod, container)
+        # so the backend can build an entity_key that isn't just "unknown".
+        # Keep_Log On + Merge_Log Off keeps the raw `log` field intact.
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           Off
+        Keep_Log            On
+        K8S-Logging.Parser  Off
+        K8S-Logging.Exclude Off
+    [OUTPUT]
+        # Plain http output with Format json. Fluent Bit's `opentelemetry`
+        # output sends OTLP/protobuf which our ingest endpoint can't parse.
+        # The endpoint accepts flat JSON arrays (this path) AND OTLP/JSON.
+        Name           http
+        Match          *
+        Host           automend-api.automend.svc.cluster.local
+        Port           8000
+        URI            /api/webhooks/ingest/otlp
+        Format         json
+        json_date_key  timestamp
+        json_date_format iso8601
+        tls            off
+  parsers.conf: |
+    [PARSER]
+        Name         cri
+        Format       regex
+        Regex        ^(?<time>[^ ]+) (?<stream>stdout|stderr) [^ ]* (?<log>.*)$
+        Time_Key     time
+        Time_Format  %Y-%m-%dT%H:%M:%S.%L%z
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: logging
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: fluent-bit-read }
+rules:
+- apiGroups: [""]
+  resources: [pods, namespaces]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: fluent-bit-read }
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit-read
+subjects:
+- kind: ServiceAccount
+  name: fluent-bit
+  namespace: logging
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: logging
+spec:
+  selector: { matchLabels: { app: fluent-bit } }
+  template:
+    metadata: { labels: { app: fluent-bit } }
+    spec:
+      serviceAccountName: fluent-bit
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:3.0
+        volumeMounts:
+        # readOnly: true is required on GKE Autopilot — its "no write-mode
+        # hostPath" admission guard rejects the DaemonSet otherwise.
+        - { name: varlog, mountPath: /var/log, readOnly: true }
+        - { name: config, mountPath: /fluent-bit/etc/ }
+      volumes:
+      - name: varlog
+        hostPath: { path: /var/log }
+      - name: config
+        configMap: { name: fluent-bit-config }

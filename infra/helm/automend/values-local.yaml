@@ -1,0 +1,114 @@
+# =============================================================================
+# values-local.yaml — kind / Docker Desktop development overrides
+#
+# Usage:
+#   kind create cluster --name automend-demo
+#
+#   # Build all 4 images (frontend + api + worker + temporal-worker) and load
+#   # them into kind so pullPolicy=Never works:
+#   docker build -t automend/api:dev              -f infra/dockerfiles/Dockerfile.api             backend
+#   docker build -t automend/worker:dev           -f infra/dockerfiles/Dockerfile.worker          backend
+#   docker build -t automend/temporal-worker:dev  -f infra/dockerfiles/Dockerfile.temporal-worker backend
+#   docker build -t automend/frontend:dev         -f infra/dockerfiles/Dockerfile.frontend        .
+#
+#   for i in api worker temporal-worker frontend; do
+#     kind load docker-image automend/$i:dev --name automend-demo
+#   done
+#
+#   helm install automend infra/helm/automend -f infra/helm/automend/values-local.yaml
+#
+# Differences from values.yaml:
+#   - subcharts on (postgres / redis / temporal run in-cluster, not managed)
+#   - replicas=1 everywhere (laptop resources)
+#   - image tags pinned to "dev" (what the build commands above produce)
+#   - pullPolicy=Never (images are loaded, not pulled)
+#   - ingress.host=localhost for straightforward port-forward testing
+#   - TLS off
+# =============================================================================
+
+global:
+  imageTag: dev
+  imagePullPolicy: Never
+
+# -----------------------------------------------------------------------------
+# Subcharts — enabled for local dev. Subchart configuration itself is added
+# by Task 11.5 (pgvector image swap for postgres, etc.).
+# -----------------------------------------------------------------------------
+postgres:
+  enabled: true
+redis:
+  enabled: true
+temporal:
+  enabled: true
+
+# -----------------------------------------------------------------------------
+# Single-replica everywhere — laptop RAM budget.
+# -----------------------------------------------------------------------------
+api:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+windowWorker:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 250m, memory: 256Mi }
+
+correlationWorker:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 250m, memory: 256Mi }
+
+temporalWorker:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+classifier:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 250m, memory: 256Mi }
+
+frontend:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 250m, memory: 256Mi }
+
+# -----------------------------------------------------------------------------
+# Dev CORS / Ingress
+# -----------------------------------------------------------------------------
+config:
+  corsOrigins:
+    - "http://localhost"
+    - "http://localhost:3000"
+    - "http://automend.local"
+  logLevel: DEBUG
+  # 30s windows for the local dev loop — production defaults to 5min via
+  # values.yaml. Without this override every helm upgrade cold-starts a
+  # 5-min wait before the first incident appears.
+  windowSizeSeconds: 30
+
+ingress:
+  enabled: true
+  className: nginx
+  host: automend.local
+  tls: []
+
+# -----------------------------------------------------------------------------
+# RBAC — local dev grants the SA cluster-wide access so the Clusters API
+# (Task 11.8b) can list namespaces and the scale activities can target any
+# deployment in any namespace without updating values on every `helm upgrade`.
+# Per-namespace Roles are added for `ml` + `default` as a deliberate
+# overlap — handy if you later flip clusterWide off for a tighter scope.
+# -----------------------------------------------------------------------------
+rbac:
+  clusterWide: true
+  targetNamespaces:
+    - ml
+    - default

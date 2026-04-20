@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: search-index
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: indexer
+  namespace: search-index
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: indexer }
+  template:
+    metadata:
+      labels: { app: indexer }
+    spec:
+      containers:
+      - name: app
+        image: python:3.11-slim
+        # Emits failure.storage log lines. Matches the regex classifier's
+        # "disk full|no space left|read.only file system|volume mount fail"
+        # patterns (see app/services/log_patterns.py).
+        command: ["python","-u","-c"]
+        args:
+        - |
+          import time, random
+          patterns = [
+            "write failed: no space left on device (/var/lib/index)",
+            "disk full: cannot flush segment index-0042.sst",
+            "I/O error on block 8192 of /dev/sdb1",
+            "read-only file system when writing checkpoint",
+            "volume mount failed: PVC index-data pending for 120s",
+          ]
+          while True:
+            line = random.choice(patterns)
+            print(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ')} ERROR {line}", flush=True)
+            time.sleep(2)
+        resources:
+          requests: { memory: "32Mi", cpu: "10m" }
+          limits:   { memory: "64Mi", cpu: "50m" }

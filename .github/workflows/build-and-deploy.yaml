@@ -1,0 +1,198 @@
+name: build-and-deploy
+
+# Triggers:
+#   - push to main  → build + push all 4 images + helm upgrade
+#   - PR to main    → build (no push) + helm template + chart tests
+#   - manual        → same as push (useful for first deploy / re-deploys)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Auth happens via Workload Identity Federation — no SA keys. Requires the
+# Terraform stack in infra/terraform/ to be applied with var.github_repository
+# = "OWNER/REPO" set to THIS repo. The two values below are the Terraform
+# outputs: `workload_identity_provider` + `ci_service_account_email`.
+# Set them as repo-level GitHub secrets (Settings → Secrets → Actions):
+#   WIF_PROVIDER   — full resource name of the provider
+#                    e.g. projects/NNN/locations/global/workloadIdentityPools/automend-gh-dev/providers/github
+#   WIF_SA_EMAIL   — e.g. automend-ci@PROJECT.iam.gserviceaccount.com
+#   GCP_PROJECT_ID — e.g. automend-demo-2026
+#   GKE_CLUSTER    — e.g. automend-dev
+#   GKE_LOCATION   — e.g. us-central1
+#   AR_REPO_URL    — e.g. us-central1-docker.pkg.dev/PROJECT/automend
+
+permissions:
+  contents: read
+  id-token: write   # required for WIF OIDC token minting
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  LOCATION: ${{ secrets.GKE_LOCATION }}
+  REGISTRY: ${{ secrets.AR_REPO_URL }}
+
+jobs:
+  # =========================================================================
+  # Build + push. Runs on push-to-main and manual dispatch.
+  # Skipped on PR (see `if`).
+  # =========================================================================
+  build-and-push:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            dockerfile: infra/dockerfiles/Dockerfile.api
+            context: backend
+          - image: worker
+            dockerfile: infra/dockerfiles/Dockerfile.worker
+            context: backend
+          - image: temporal-worker
+            dockerfile: infra/dockerfiles/Dockerfile.temporal-worker
+            context: backend
+          - image: frontend
+            dockerfile: infra/dockerfiles/Dockerfile.frontend
+            context: .
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Configure Docker to push to Artifact Registry
+        run: gcloud auth configure-docker "${LOCATION}-docker.pkg.dev" --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build + push ${{ matrix.image }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/automend/${{ matrix.image }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/automend/${{ matrix.image }}:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/automend/${{ matrix.image }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/automend/${{ matrix.image }}:buildcache,mode=max
+
+  # =========================================================================
+  # Deploy (helm upgrade). Only on push-to-main / workflow_dispatch.
+  # Depends on build-and-push so all images land before the upgrade fires.
+  # =========================================================================
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Install gke-gcloud-auth-plugin
+        run: gcloud components install gke-gcloud-auth-plugin --quiet
+
+      - name: Get GKE credentials
+        run: gcloud container clusters get-credentials "$CLUSTER" --region "$LOCATION" --project "$PROJECT_ID"
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.15.0"
+
+      # values-gcp.yaml lands in Task 12.6. Until then, wire the workflow to
+      # values-gcp-quick.yaml (demo-grade) so the pipeline is end-to-end
+      # testable before 12.6 ships. Swap the filename when 12.6 merges.
+      - name: Helm upgrade AutoMend
+        run: |
+          helm upgrade --install automend ./infra/helm/automend \
+            --namespace automend --create-namespace \
+            --values ./infra/helm/automend/values-gcp-quick.yaml \
+            --set global.imageRegistry="${REGISTRY}" \
+            --set global.imageTag="${{ github.sha }}" \
+            --reuse-values \
+            --wait --timeout 10m
+
+  # =========================================================================
+  # PR validation. No push, no deploy — just prove the images build and the
+  # chart renders cleanly.
+  # =========================================================================
+  pr-validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build api image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: infra/dockerfiles/Dockerfile.api
+          push: false
+
+      - name: Build worker image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: infra/dockerfiles/Dockerfile.worker
+          push: false
+
+      - name: Build temporal-worker image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: infra/dockerfiles/Dockerfile.temporal-worker
+          push: false
+
+      - name: Build frontend image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infra/dockerfiles/Dockerfile.frontend
+          push: false
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.15.0"
+
+      - name: helm lint
+        run: helm lint ./infra/helm/automend
+
+      - name: helm template (values-local)
+        run: helm template automend ./infra/helm/automend -f ./infra/helm/automend/values-local.yaml > /dev/null
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test deps
+        run: pip install pytest pyyaml
+
+      - name: Chart tests
+        run: pytest infra/helm/tests/ -v

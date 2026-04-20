@@ -1,0 +1,18 @@
+{{- if .Values.classifier.enabled }}
+{{- $component := "classifier" -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "automend.componentFullname" (dict "ctx" . "component" $component) }}
+  labels:
+    {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  type: {{ .Values.classifier.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.classifier.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "automend.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+{{- end }}

@@ -1,0 +1,25 @@
+# Default Helm ignores (patterns excluded from packaged charts).
+.DS_Store
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.project
+.idea/
+*.tmproj
+.vscode/
+
+# Local-dev overrides and test fixtures.
+# NOTE: use absolute patterns with leading `/` so these don't also match
+# `templates/tests/` (where the `helm test` hook Pod lives — excluding that
+# would make `helm test` report "TEST SUITE: None" with nothing to run).
+/ci/
+/tests/

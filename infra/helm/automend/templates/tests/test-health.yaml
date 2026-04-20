@@ -1,0 +1,55 @@
+{{- /*
+    test-health.yaml — `helm test <release>` smoke check.
+
+    Runs a single curl-based Pod in the release namespace that hits
+      GET http://<api>:8000/health
+      GET http://<classifier>:8001/health
+      GET http://<frontend>:3000/   (expects any 2xx/3xx — Next.js serves the
+                                     login page; no dedicated /health route)
+    Exits 0 iff all three respond within the per-probe timeout.
+
+    The pod is reaped after the test run (hook-succeeded delete policy).
+    Disable via `--set tests.enabled=false` in environments that shouldn't
+    run smoke tests (e.g. hardened production clusters).
+*/ -}}
+{{- if .Values.tests.enabled -}}
+{{- $fullname := include "automend.fullname" . -}}
+{{- $apiSvc      := include "automend.componentFullname" (dict "ctx" . "component" "api") -}}
+{{- $classSvc    := include "automend.componentFullname" (dict "ctx" . "component" "classifier") -}}
+{{- $feSvc       := include "automend.componentFullname" (dict "ctx" . "component" "frontend") -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ $fullname }}-test-health
+  labels:
+    {{- include "automend.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test-health
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: curl
+      image: "{{ .Values.tests.image.repository }}:{{ .Values.tests.image.tag }}"
+      imagePullPolicy: IfNotPresent
+      command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "==> api /health"
+          curl --fail --silent --show-error --max-time 10 \
+            http://{{ $apiSvc }}:{{ .Values.api.service.port }}/health
+          echo
+          echo "==> classifier /health"
+          curl --fail --silent --show-error --max-time 10 \
+            http://{{ $classSvc }}:{{ .Values.classifier.service.port }}/health
+          echo
+          echo "==> frontend / (TCP + any 2xx/3xx)"
+          curl --fail --silent --show-error --max-time 10 -o /dev/null \
+            http://{{ $feSvc }}:{{ .Values.frontend.service.port }}/
+          echo
+          echo "All services healthy."
+{{- end -}}

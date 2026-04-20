@@ -1,0 +1,477 @@
+# =============================================================================
+# AutoMend Helm chart — production-leaning defaults.
+#
+# Environment overrides:
+#   values-local.yaml — kind / Docker Desktop (subcharts on, dev image tags)
+#   values-gcp.yaml   — GKE + managed services (Phase 12)
+#
+# Every workload section below has a consistent shape:
+#   <component>:
+#     enabled: bool
+#     replicas: int
+#     image:
+#       repository: str
+#       tag: str            # empty → inherits .Values.global.imageTag → Chart.appVersion
+#       pullPolicy: str
+#     resources: {requests, limits}
+#     extraEnv: []          # per-component overrides layered on top of config + secrets
+#     nodeSelector / tolerations / affinity as needed
+# =============================================================================
+
+global:
+  # Registry prefix prepended to every component image.repository. Empty means
+  # images are pulled by their plain repository (useful for `kind load` with
+  # docker.io/library/... style names).
+  imageRegistry: ""
+
+  # Image tag applied to every component unless the component overrides it.
+  # Empty → falls back to Chart.appVersion in the templates.
+  imageTag: ""
+
+  # Default pullPolicy for every component. Flip to "Never" in values-local.yaml
+  # when loading images into kind via `kind load docker-image`.
+  imagePullPolicy: IfNotPresent
+
+  # imagePullSecrets: applied to every Deployment + the ServiceAccount.
+  imagePullSecrets: []
+  # - name: gcr-pull-secret
+
+# -----------------------------------------------------------------------------
+# Name overrides
+# -----------------------------------------------------------------------------
+nameOverride: ""
+fullnameOverride: ""
+
+# -----------------------------------------------------------------------------
+# ServiceAccount — one SA for the whole app. Phase 12 annotates it for
+# Workload Identity (GKE → GCP service account impersonation).
+# -----------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  # Leave empty to use automend.fullname
+  name: ""
+  annotations: {}
+  # For GKE Workload Identity, set:
+  # iam.gke.io/gcp-service-account: automend-app@<project>.iam.gserviceaccount.com
+
+# -----------------------------------------------------------------------------
+# RBAC — permissions the app ServiceAccount needs to execute playbook
+# activities against the Kubernetes API (scale_deployment, rollback_release,
+# fetch_pod_logs, restart_workload, etc.).
+#
+# Both modes render `rbac.authorization.k8s.io/v1` resources bound to the
+# same ServiceAccount created by `serviceaccount.yaml`.
+#
+#   targetNamespaces: list of namespace names. For each entry the chart
+#     renders one Role + one RoleBinding in that namespace granting
+#     get/list/watch/patch/update on apps/deployments + apps/deployments/scale
+#     and get/list/watch on pods + pods/log. Use this when you want
+#     namespace-scoped access to a known-ahead-of-time set of targets.
+#
+#   clusterWide: when true, render a single ClusterRole + ClusterRoleBinding
+#     granting the same verbs cluster-wide PLUS get/list/watch on namespaces
+#     (needed by the Clusters API that Task 11.8b adds). Convenient for dev
+#     and for environments where the target namespace set is dynamic.
+#
+# Default is both off — production deploys opt in by setting one or both
+# explicitly in their values file. values-local.yaml turns on both.
+# -----------------------------------------------------------------------------
+rbac:
+  clusterWide: false
+  targetNamespaces: []
+
+# -----------------------------------------------------------------------------
+# Non-secret environment — materialised into a ConfigMap in Task 11.4.
+# Every key here maps 1:1 to an AUTOMEND_* env var that the backend reads via
+# app.config.Settings.
+# -----------------------------------------------------------------------------
+config:
+  logLevel: INFO
+  corsOrigins:
+    - "http://localhost:3000"
+  jwtAlgorithm: HS256
+
+  # Classifier — "/classify" hits the stub, "/predict_anomaly" hits the
+  # RoBERTa service in inference_backend/ClassifierModel.
+  classifierEndpoint: /classify
+  classifierConfidenceThreshold: 0.7
+
+  # Architect provider — "anthropic" or "local".
+  architectProvider: anthropic
+  architectApiBaseUrl: https://api.anthropic.com
+  architectModel: claude-sonnet-4-20250514
+  architectLocalEndpoint: /generate_workflow
+
+  # Embedding service
+  embeddingApiBaseUrl: https://api.openai.com/v1
+  embeddingModel: text-embedding-3-small
+  embeddingDimensions: 1536
+
+  # Window worker
+  windowSizeSeconds: 300
+  maxWindowEntries: 1000
+
+# -----------------------------------------------------------------------------
+# External (non-subchart) service endpoints — used when the subchart for a
+# given dependency is disabled. Phase 12 populates these from Terraform
+# outputs via External Secrets / ConfigMap overrides.
+# -----------------------------------------------------------------------------
+external:
+  postgres:
+    host: ""              # Required when postgres.enabled=false
+    port: 5432
+    database: automend
+    user: automend
+  redis:
+    host: ""              # Required when redis.enabled=false
+    port: 6379
+  temporal:
+    serverUrl: ""         # Required when temporal.enabled=false
+
+# -----------------------------------------------------------------------------
+# Secrets — sensitive env vars. By default, the chart creates a Secret from
+# the literals below. In production, set `secrets.create: false` and point
+# `secrets.existingSecret` at an externally-managed Secret (e.g. one
+# reconciled by External Secrets Operator from GCP Secret Manager — Task 12.6).
+# -----------------------------------------------------------------------------
+secrets:
+  create: true
+  existingSecret: ""      # Used when create=false
+
+  # Literals — only populated when create=true. NEVER commit real secrets to
+  # values.yaml; inject via `helm install --set` / `-f secrets-override.yaml`
+  # / External Secrets Operator.
+  values:
+    jwtSecret: "change-me-generate-with-openssl-rand-hex-32"
+    postgresPassword: "automend"
+    redisPassword: ""
+    architectApiKey: ""           # Anthropic when provider=anthropic
+    embeddingApiKey: ""           # OpenAI or compatible
+    slackBotToken: ""
+    pagerDutyToken: ""
+    jiraApiToken: ""
+
+# =============================================================================
+# WORKLOAD COMPONENTS
+# =============================================================================
+
+api:
+  enabled: true
+  replicas: 2
+  image:
+    repository: automend/api
+    tag: ""
+    pullPolicy: ""
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    requests: { cpu: 100m,  memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+  podAnnotations: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    # python:3.11-slim has no user at UID 1000, but k8s runs the process
+    # under this UID anyway — /app is world-readable after pip install so
+    # Python can import modules. Frontend image has its own nextjs user
+    # at UID 1001 (set in Dockerfile.frontend) so its podSecurityContext
+    # overrides runAsUser below.
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile: { type: RuntimeDefault }
+  containerSecurityContext:
+    # Leave writable so Python can cache __pycache__ + libraries can use /tmp.
+    # Tighten in Phase 12 production values with a tmpfs emptyDir on /tmp.
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities: { drop: [ALL] }
+  # Extra env vars layered on top of config + secrets (per-component override)
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+windowWorker:
+  enabled: true
+  replicas: 1           # Windows are partitioned by entity_key; one replica OK for v1
+  image:
+    repository: automend/worker
+    tag: ""
+    pullPolicy: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  podAnnotations: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    # python:3.11-slim has no user at UID 1000, but k8s runs the process
+    # under this UID anyway — /app is world-readable after pip install so
+    # Python can import modules. Frontend image has its own nextjs user
+    # at UID 1001 (set in Dockerfile.frontend) so its podSecurityContext
+    # overrides runAsUser below.
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile: { type: RuntimeDefault }
+  containerSecurityContext:
+    # Leave writable so Python can cache __pycache__ + libraries can use /tmp.
+    # Tighten in Phase 12 production values with a tmpfs emptyDir on /tmp.
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities: { drop: [ALL] }
+  extraEnv:
+    - name: AUTOMEND_WORKER_ID
+      valueFrom:
+        fieldRef: { fieldPath: metadata.name }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+correlationWorker:
+  enabled: true
+  replicas: 1
+  image:
+    repository: automend/worker
+    tag: ""
+    pullPolicy: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  podAnnotations: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    # python:3.11-slim has no user at UID 1000, but k8s runs the process
+    # under this UID anyway — /app is world-readable after pip install so
+    # Python can import modules. Frontend image has its own nextjs user
+    # at UID 1001 (set in Dockerfile.frontend) so its podSecurityContext
+    # overrides runAsUser below.
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile: { type: RuntimeDefault }
+  containerSecurityContext:
+    # Leave writable so Python can cache __pycache__ + libraries can use /tmp.
+    # Tighten in Phase 12 production values with a tmpfs emptyDir on /tmp.
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities: { drop: [ALL] }
+  extraEnv:
+    - name: AUTOMEND_WORKER_ID
+      valueFrom:
+        fieldRef: { fieldPath: metadata.name }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+temporalWorker:
+  enabled: true
+  replicas: 2
+  image:
+    repository: automend/temporal-worker
+    tag: ""
+    pullPolicy: ""
+  resources:
+    requests: { cpu: 100m,  memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+  podAnnotations: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    # python:3.11-slim has no user at UID 1000, but k8s runs the process
+    # under this UID anyway — /app is world-readable after pip install so
+    # Python can import modules. Frontend image has its own nextjs user
+    # at UID 1001 (set in Dockerfile.frontend) so its podSecurityContext
+    # overrides runAsUser below.
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile: { type: RuntimeDefault }
+  containerSecurityContext:
+    # Leave writable so Python can cache __pycache__ + libraries can use /tmp.
+    # Tighten in Phase 12 production values with a tmpfs emptyDir on /tmp.
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities: { drop: [ALL] }
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+classifier:
+  enabled: true
+  replicas: 2
+  image:
+    repository: automend/worker    # Same image as workers; only command differs
+    tag: ""
+    pullPolicy: ""
+  command: ["python", "-m", "app.services.classifier_server"]
+  service:
+    type: ClusterIP
+    port: 8001
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  podAnnotations: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    # python:3.11-slim has no user at UID 1000, but k8s runs the process
+    # under this UID anyway — /app is world-readable after pip install so
+    # Python can import modules. Frontend image has its own nextjs user
+    # at UID 1001 (set in Dockerfile.frontend) so its podSecurityContext
+    # overrides runAsUser below.
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile: { type: RuntimeDefault }
+  containerSecurityContext:
+    # Leave writable so Python can cache __pycache__ + libraries can use /tmp.
+    # Tighten in Phase 12 production values with a tmpfs emptyDir on /tmp.
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+    capabilities: { drop: [ALL] }
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+frontend:
+  enabled: true
+  replicas: 2
+  image:
+    repository: automend/frontend
+    tag: ""
+    pullPolicy: ""
+  service:
+    type: ClusterIP
+    port: 3000
+  # API_PROXY_TARGET tells the Next.js standalone server where to proxy
+  # /api/* at runtime. Inside the cluster, this points at the API service.
+  apiProxyTarget: ""      # Empty → templates default to http://<fullname>-api:<port>
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  podAnnotations: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    # Dockerfile.frontend creates a `nextjs` user at UID 1001. kubelet
+    # can't verify `USER nextjs` (a username, not a UID) satisfies
+    # runAsNonRoot, so we pin it explicitly here.
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+    seccompProfile: { type: RuntimeDefault }
+  containerSecurityContext:
+    readOnlyRootFilesystem: false    # Next.js writes to /tmp at runtime
+    allowPrivilegeEscalation: false
+    capabilities: { drop: [ALL] }
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -----------------------------------------------------------------------------
+# Ingress — single Ingress routes both the frontend (/) and the API (/api,
+# /api/ws). Phase 12 flips className to "gce" for GCLB.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  host: automend.local
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # WebSocket support for /api/ws/incidents
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+  tls: []
+  # - secretName: automend-tls
+  #   hosts: [automend.example.com]
+
+# =============================================================================
+# OPTIONAL LOCAL-DEV DEPENDENCIES — off by default; values-local.yaml turns
+# them on. These are NOT production-grade: no HA, no backups, no resource
+# tuning for real load. Production deploys (Phase 12) point the chart at
+# managed Cloud SQL / Memorystore via `external.*` and keep these off.
+#
+# DECISION-024 explains why these are in-house templates (postgres-dev.yaml,
+# redis-dev.yaml, temporal-dev.yaml) rather than external subchart deps.
+# =============================================================================
+
+postgres:
+  enabled: false
+  image:
+    # pgvector/pgvector image has pgvector baked in — no CREATE EXTENSION dance
+    # needed. Derived from the official postgres image, not bitnami.
+    repository: pgvector/pgvector
+    tag: pg16
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 5432
+  persistence:
+    enabled: true
+    size: 2Gi
+    # Empty storageClassName = cluster default (works on kind)
+    storageClassName: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+redis:
+  enabled: false
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 6379
+  persistence:
+    enabled: false         # local dev loses state on pod restart — that's fine
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+
+temporal:
+  enabled: false
+  image:
+    # temporalio/auto-setup bundles Temporal server + SQLite init. No separate
+    # DB pod needed for local dev. Lose state on pod restart — acceptable since
+    # dev workflows are usually short-lived.
+    repository: temporalio/auto-setup
+    tag: "1.24.2"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 7233
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+# -----------------------------------------------------------------------------
+# Migrations Job — runs `alembic upgrade head` + seed scripts as a Helm
+# post-install / post-upgrade hook. Independent of the in-cluster postgres
+# subchart above; also works against `external.postgres.host` for GCP deploys.
+# -----------------------------------------------------------------------------
+migrations:
+  enabled: true
+  image:
+    # Reuses the API image — it has alembic + the seed scripts.
+    repository: automend/api
+    tag: ""                # empty → inherits global.imageTag → Chart.appVersion
+    pullPolicy: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  # If you need to re-seed existing data, set seedToolsAndRules: false to skip
+  # the seed steps and just run `alembic upgrade head`.
+  seedToolsAndRules: true
+
+# =============================================================================
+# TESTS — Helm test hook pod added in Task 11.6
+# =============================================================================
+
+tests:
+  enabled: true
+  image:
+    repository: curlimages/curl
+    tag: "8.7.1"

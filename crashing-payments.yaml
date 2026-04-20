@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payments
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-api
+  namespace: payments
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fraud-api }
+  template:
+    metadata:
+      labels: { app: fraud-api }
+    spec:
+      containers:
+      - name: app
+        image: python:3.11-slim
+        # Emits failure.network log lines. Matches the regex classifier's
+        # "connection refused|ECONNREFUSED|DNS resolution fail|no route to host"
+        # patterns (see app/services/log_patterns.py).
+        command: ["python","-u","-c"]
+        args:
+        - |
+          import time, random
+          patterns = [
+            "connection refused to upstream fraud-scoring-v2:8443",
+            "ECONNREFUSED 10.4.2.37:5432 — retrying in 2s",
+            "DNS resolution failed for risk-model.payments.svc.cluster.local",
+            "no route to host: 10.4.99.1 — giving up after 5 retries",
+            "connection reset by peer during POST /score",
+          ]
+          while True:
+            line = random.choice(patterns)
+            print(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ')} ERROR {line}", flush=True)
+            time.sleep(2)
+        resources:
+          requests: { memory: "32Mi", cpu: "10m" }
+          limits:   { memory: "64Mi", cpu: "50m" }

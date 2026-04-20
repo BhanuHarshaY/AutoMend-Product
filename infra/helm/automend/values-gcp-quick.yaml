@@ -1,0 +1,110 @@
+# =============================================================================
+# values-gcp-quick.yaml — minimal "get-it-running-on-GKE" override.
+#
+# NOT production grade. Runs the same chart you tested on kind, with:
+#   - subcharts ON (in-cluster Postgres / Redis / Temporal, no Cloud SQL /
+#     Memorystore). Data lives in PVCs on node-local disks — fine for a demo,
+#     NOT for production.
+#   - images pulled from Artifact Registry in the deploying project
+#   - architect provider = gemini (Google AI Studio API key)
+#   - ingress via GKE's built-in gce class (GCLB)
+#
+# Usage (replace PROJECT / REGION):
+#   helm install automend infra/helm/automend \
+#     --namespace automend --create-namespace \
+#     --values infra/helm/automend/values-gcp-quick.yaml \
+#     --set global.imageRegistry=REGION-docker.pkg.dev/PROJECT/automend \
+#     --set secrets.values.architectApiKey=$GEMINI_API_KEY \
+#     --set ingress.host=YOUR-DOMAIN-OR-LB-IP.nip.io
+#
+# For production, replace this with a real values-gcp.yaml that flips
+# subcharts off and points at managed services (Phase 12 proper).
+# =============================================================================
+
+global:
+  imageTag: dev
+  imagePullPolicy: IfNotPresent
+
+# Subcharts ON — same as values-local, zero managed-service setup.
+postgres:
+  enabled: true
+redis:
+  enabled: true
+temporal:
+  enabled: true
+
+# Single-replica everywhere — GKE Autopilot charges per pod-request.
+# Bump these for anything beyond a demo.
+api:
+  replicas: 1
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+windowWorker:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+correlationWorker:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+temporalWorker:
+  replicas: 1
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+classifier:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+frontend:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+# -----------------------------------------------------------------------------
+# Config overrides for GCP-quick
+# -----------------------------------------------------------------------------
+config:
+  logLevel: INFO
+  # 30s windows for fast demo feedback. Production: 300.
+  windowSizeSeconds: 30
+  # Architect → Google AI Studio Gemini 2.5 Flash. Flash is more widely
+  # available on new AI Studio keys than 2.5 Pro (Pro often 503s on free
+  # tier). Override via `--set config.architectModel=gemini-2.5-pro` if
+  # your key has access.
+  architectProvider: gemini
+  architectModel: gemini-2.5-flash
+  # Base URL is ignored by the gemini branch (it hardcodes generativelanguage.googleapis.com)
+  # but keep the key populated so pydantic-settings doesn't complain.
+  architectApiBaseUrl: "https://generativelanguage.googleapis.com"
+
+# -----------------------------------------------------------------------------
+# RBAC — let the SA act on whichever namespaces host the workloads being
+# remediated. Add entries as you create them.
+# -----------------------------------------------------------------------------
+rbac:
+  clusterWide: true
+  targetNamespaces:
+    - ml
+    - default
+
+# -----------------------------------------------------------------------------
+# Ingress — GKE's managed GCLB via the `gce` class. Set .host to whatever
+# DNS name (or nip.io) you want to front the service with. TLS is left off
+# for speed; add a ManagedCertificate annotation later.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: gce
+  host: automend.example.com
+  tls: []

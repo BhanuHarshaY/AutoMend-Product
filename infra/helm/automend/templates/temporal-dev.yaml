@@ -1,0 +1,145 @@
+{{- /*
+    temporal-dev.yaml — local-dev Temporal server.
+    Uses temporalio/auto-setup pointed at the in-cluster postgres-dev pod.
+    NOT production-grade — see DECISION-024. Production (Phase 12) either
+    uses Temporal Cloud or the full temporalio/temporal Helm chart.
+
+    Auto-setup doesn't support SQLite; it needs Postgres/MySQL/Cassandra.
+    We reuse the postgres-dev pod: its initdb.sql creates `temporal` and
+    `temporal_visibility` databases on first boot (see postgres-dev.yaml).
+    Auto-setup then runs its schema migrations on those DBs and starts the
+    Temporal server.
+*/ -}}
+{{- if .Values.temporal.enabled -}}
+{{- $component := "temporal" -}}
+{{- $fullname := include "automend.componentFullname" (dict "ctx" . "component" $component) -}}
+{{- $postgresHost := include "automend.componentFullname" (dict "ctx" . "component" "postgres") -}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  type: {{ .Values.temporal.service.type }}
+  ports:
+    - name: grpc
+      port: {{ .Values.temporal.service.port }}
+      targetPort: grpc
+      protocol: TCP
+  selector:
+    {{- include "automend.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "automend.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "automend.componentLabels" (dict "ctx" . "component" $component) | nindent 8 }}
+    spec:
+      # Wait for Postgres to accept connections + for the Temporal databases
+      # to exist before starting auto-setup (its schema create step assumes
+      # the target DB is reachable).
+      initContainers:
+        - name: wait-for-postgres
+          # Reuse the postgres image already loaded into the cluster (has psql
+          # baked in). Avoids pulling a second postgres image just for the
+          # wait script — matters when global.imagePullPolicy=Never (kind dev).
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy | default .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          env:
+            - name: PGHOST
+              value: {{ $postgresHost | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: PGUSER
+              value: {{ .Values.external.postgres.user | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "automend.secretName" . }}
+                  key: AUTOMEND_POSTGRES_PASSWORD
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for postgres and the temporal databases to exist..."
+              for i in $(seq 1 60); do
+                if psql -d temporal -c 'SELECT 1' >/dev/null 2>&1 && \
+                   psql -d temporal_visibility -c 'SELECT 1' >/dev/null 2>&1; then
+                  echo "Temporal databases reachable."
+                  exit 0
+                fi
+                echo "  attempt $i/60 — not ready yet, sleeping 2s"
+                sleep 2
+              done
+              echo "Temporal databases did not become reachable within 120s"
+              exit 1
+      containers:
+        - name: temporal
+          image: "{{ .Values.temporal.image.repository }}:{{ .Values.temporal.image.tag }}"
+          imagePullPolicy: {{ .Values.temporal.image.pullPolicy | default .Values.global.imagePullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 7233
+              protocol: TCP
+          env:
+            - name: DB
+              value: postgres12
+            - name: DB_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: POSTGRES_SEEDS
+              value: {{ $postgresHost | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.external.postgres.user | quote }}
+            - name: POSTGRES_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "automend.secretName" . }}
+                  key: AUTOMEND_POSTGRES_PASSWORD
+            # auto-setup uses these to target the right DBs (created by
+            # postgres-dev's initdb ConfigMap).
+            - name: DBNAME
+              value: temporal
+            - name: VISIBILITY_DBNAME
+              value: temporal_visibility
+            - name: DEFAULT_NAMESPACE
+              value: default
+            - name: SKIP_DEFAULT_NAMESPACE_CREATION
+              value: "false"
+            # No Elasticsearch for visibility — use the SQL visibility store
+            - name: ENABLE_ES
+              value: "false"
+            # Trim the service set to what auto-setup ships — saves ~150MB RAM
+            # vs running history + matching + frontend + worker + UI together.
+            - name: SERVICES
+              value: "history,matching,frontend,worker"
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 15
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.temporal.resources | nindent 12 }}
+{{- end -}}

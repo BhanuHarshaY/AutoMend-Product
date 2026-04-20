@@ -1,0 +1,229 @@
+version: "3.8"
+
+# Full dev stack — infrastructure services + AutoMend application services.
+# For infra-only (when running API/workers on the host), use docker-compose.infra.yml.
+#
+# Usage:
+#   cd infra
+#   docker compose up -d                  # Build + start everything
+#   docker compose up -d --build          # Rebuild images on changes
+#   docker compose down                   # Stop
+#   docker compose down -v                # Stop + delete data volumes
+#   docker compose logs -f api            # Tail API logs
+#   docker compose ps                     # Service status
+
+services:
+  # ========== INFRASTRUCTURE ==========
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: automend
+      POSTGRES_PASSWORD: automend
+      POSTGRES_DB: automend
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U automend"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postgres-temporal:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_DB: temporal
+    volumes:
+      - postgres_temporal_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgres-temporal
+    depends_on:
+      postgres-temporal:
+        condition: service_healthy
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.enable-lifecycle"
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.full.yml:/etc/alertmanager/alertmanager.yml
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+  # ========== APPLICATION ==========
+
+  api:
+    build:
+      context: ../backend
+      dockerfile: ../infra/dockerfiles/Dockerfile.api
+    image: automend/api:latest
+    ports:
+      - "8000:8000"
+    environment:
+      AUTOMEND_POSTGRES_HOST: postgres
+      AUTOMEND_REDIS_HOST: redis
+      AUTOMEND_TEMPORAL_SERVER_URL: temporal:7233
+      AUTOMEND_PROMETHEUS_URL: http://prometheus:9090
+      AUTOMEND_CLASSIFIER_SERVICE_URL: http://classifier:8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+  window-worker:
+    build:
+      context: ../backend
+      dockerfile: ../infra/dockerfiles/Dockerfile.worker
+    image: automend/worker:latest
+    command: ["python", "main_window_worker.py"]
+    environment:
+      AUTOMEND_POSTGRES_HOST: postgres
+      AUTOMEND_REDIS_HOST: redis
+      AUTOMEND_CLASSIFIER_SERVICE_URL: http://classifier:8001
+      AUTOMEND_WORKER_ID: window-worker-0
+    depends_on:
+      redis:
+        condition: service_healthy
+      classifier:
+        condition: service_started
+
+  correlation-worker:
+    build:
+      context: ../backend
+      dockerfile: ../infra/dockerfiles/Dockerfile.worker
+    image: automend/worker:latest
+    command: ["python", "main_correlation_worker.py"]
+    environment:
+      AUTOMEND_POSTGRES_HOST: postgres
+      AUTOMEND_REDIS_HOST: redis
+      AUTOMEND_TEMPORAL_SERVER_URL: temporal:7233
+      AUTOMEND_WORKER_ID: correlation-worker-0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+  temporal-worker:
+    build:
+      context: ../backend
+      dockerfile: ../infra/dockerfiles/Dockerfile.temporal-worker
+    image: automend/temporal-worker:latest
+    environment:
+      AUTOMEND_POSTGRES_HOST: postgres
+      AUTOMEND_REDIS_HOST: redis
+      AUTOMEND_TEMPORAL_SERVER_URL: temporal:7233
+      AUTOMEND_PROMETHEUS_URL: http://prometheus:9090
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+  classifier:
+    build:
+      context: ../backend
+      dockerfile: ../infra/dockerfiles/Dockerfile.worker
+    image: automend/worker:latest
+    command: ["python", "-m", "app.services.classifier_server"]
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health').raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: infra/dockerfiles/Dockerfile.frontend
+      args:
+        # Empty → client calls /api on the same origin; the Next.js server proxies
+        # to API_PROXY_TARGET at runtime. Override to e.g. https://api.example.com
+        # when the frontend should call the API directly without proxying.
+        NEXT_PUBLIC_API_BASE_URL: ""
+    image: automend/frontend:latest
+    ports:
+      - "3000:3000"
+    environment:
+      # Read at runtime by next.config.js rewrites() — proxies /api/* to the
+      # compose service-name host, not localhost.
+      API_PROXY_TARGET: http://api:8000
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  postgres_temporal_data:
+  redis_data:
+  grafana_data:
