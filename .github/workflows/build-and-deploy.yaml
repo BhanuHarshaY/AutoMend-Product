@@ -117,6 +117,27 @@ jobs:
         with:
           install_components: gke-gcloud-auth-plugin
 
+      - name: Allow this runner's IP on the cluster master
+        # The GKE master is public but guarded by master_authorized_networks.
+        # GitHub runner IPs rotate, so we append this runner's public IP to
+        # the list for the duration of this job, then remove it in the
+        # `always()` cleanup step below.
+        id: auth_master
+        run: |
+          RUNNER_IP=$(curl -s https://api.ipify.org)
+          echo "runner_ip=$RUNNER_IP" >> $GITHUB_OUTPUT
+          EXISTING=$(gcloud container clusters describe "$CLUSTER" \
+            --region "$LOCATION" --project "$PROJECT_ID" \
+            --format='value(masterAuthorizedNetworksConfig.cidrBlocks.cidrBlock.list())')
+          NEW_LIST="${EXISTING:+$EXISTING,}${RUNNER_IP}/32"
+          echo "Updating authorized networks to: $NEW_LIST"
+          gcloud container clusters update "$CLUSTER" \
+            --region "$LOCATION" --project "$PROJECT_ID" \
+            --enable-master-authorized-networks \
+            --master-authorized-networks="$NEW_LIST"
+          # GKE needs ~30s to propagate the change.
+          sleep 30
+
       - name: Get GKE credentials
         run: gcloud container clusters get-credentials "$CLUSTER" --region "$LOCATION" --project "$PROJECT_ID"
 
@@ -137,6 +158,32 @@ jobs:
             --set global.imageTag="${{ github.sha }}" \
             --reuse-values \
             --wait --timeout 10m
+
+      - name: Remove runner IP from cluster master (always)
+        if: always()
+        continue-on-error: true
+        run: |
+          RUNNER_IP="${{ steps.auth_master.outputs.runner_ip }}"
+          if [ -z "$RUNNER_IP" ]; then
+            echo "No runner_ip captured (auth step didn't run) — skip cleanup"
+            exit 0
+          fi
+          EXISTING=$(gcloud container clusters describe "$CLUSTER" \
+            --region "$LOCATION" --project "$PROJECT_ID" \
+            --format='value(masterAuthorizedNetworksConfig.cidrBlocks.cidrBlock.list())')
+          # Drop the runner's entry (handles start/middle/end of the list).
+          PRUNED=$(echo "$EXISTING" | tr ',' '\n' | grep -v "^${RUNNER_IP}/32$" | paste -sd ',')
+          if [ -z "$PRUNED" ]; then
+            # Can't have empty list while enabled — disable entirely.
+            gcloud container clusters update "$CLUSTER" \
+              --region "$LOCATION" --project "$PROJECT_ID" \
+              --no-enable-master-authorized-networks
+          else
+            gcloud container clusters update "$CLUSTER" \
+              --region "$LOCATION" --project "$PROJECT_ID" \
+              --master-authorized-networks="$PRUNED"
+          fi
+          echo "Removed $RUNNER_IP/32 — remaining: ${PRUNED:-(disabled)}"
 
   # =========================================================================
   # PR validation. No push, no deploy — just prove the images build and the
