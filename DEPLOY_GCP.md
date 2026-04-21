@@ -25,8 +25,7 @@ parallel where possible.
 7. [Verify the deploy](#7-verify-the-deploy)
 8. [Smoke-test checklist](#8-smoke-test-checklist)
 9. [Rollback plan](#9-rollback-plan)
-10. [Cost estimate](#10-cost-estimate)
-11. [Teardown](#11-teardown)
+10. [Teardown](#10-teardown)
 
 ---
 
@@ -333,32 +332,7 @@ pods keep running and connect to the restored data.
 
 ---
 
-## 10. Cost estimate
-
-Approximate monthly cost for the default production deploy (us-central1,
-24/7, REGIONAL Cloud SQL):
-
-| Component | Config | $ / month |
-|---|---|---|
-| GKE Standard regional control plane | 1 cluster | ~$75 |
-| GKE worker nodes | 3 × e2-standard-4 | ~$90 |
-| Cloud SQL | `db-custom-2-7680`, REGIONAL | ~$140 |
-| Memorystore | STANDARD_HA 1 GB | ~$70 |
-| Cloud NAT | 1 gateway | ~$35 |
-| Persistent disks | 20 GB × 2 | ~$5 |
-| Artifact Registry | < 10 GB | ~$1 |
-| GCS (models + TF state) | < 5 GB | ~$1 |
-| GCLB forwarding rule | 1 | ~$18 |
-| Egress | < 10 GB | negligible |
-| **Total** | | **~$435** |
-
-Switch `env = "dev"` in tfvars for ZONAL Cloud SQL (~$70 cheaper) and
-BASIC Memorystore option (~$35 cheaper). Gemini API is free tier for
-light use; production traffic needs a paid key.
-
----
-
-## 11. Teardown
+## 10. Teardown
 
 ```bash
 # 1. Uninstall the app
