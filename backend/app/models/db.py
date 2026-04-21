@@ -430,3 +430,44 @@ class AlertRule(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+# ---------------------------------------------------------------------------
+# 5.10  model_feedback — approve/reject signals on per-prediction outputs.
+# Polymorphic target so one table covers both models:
+#   model="classifier", target_type="classifier_output", target_id → classifier_outputs.id
+#   model="architect",  target_type="playbook_version",  target_id → playbook_versions.id
+# target_id is NOT a FK (polymorphic). Enforcement is app-layer.
+# ---------------------------------------------------------------------------
+
+
+class ModelFeedback(Base):
+    __tablename__ = "model_feedback"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    # Which model produced the output being graded. Free-form string so we
+    # can add new models (e.g. "embedding", "retrain-2026q2") without a
+    # schema change.
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    # What kind of object the target_id points at. Free-form for the same
+    # reason; app-layer knows the mapping.
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # "approve" | "reject" (app-layer validated; no Postgres enum so we can
+    # grow the vocabulary — e.g. "needs_review" later — without a migration).
+    feedback: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # Common query shape: "all feedback on this specific prediction"
+        Index("idx_model_feedback_target", "target_type", "target_id"),
+        # Retraining sample query: "all rejects for the classifier since T"
+        Index("idx_model_feedback_model_feedback", "model", "feedback"),
+        Index("idx_model_feedback_created_at", created_at.desc()),
+    )
