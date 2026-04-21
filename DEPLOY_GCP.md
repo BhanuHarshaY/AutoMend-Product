@@ -377,7 +377,5 @@ tfvars + apply, then retry destroy.
 
 - [`infra/terraform/README.md`](infra/terraform/README.md) — Terraform
   module-level details, bucket bootstrap, apply workflows.
-- [`scripts/seed_default_models.py`](scripts/seed_default_models.py) —
-  seeds the GCS model bucket.
 - [`.github/workflows/build-and-deploy.yaml`](.github/workflows/build-and-deploy.yaml) —
   CI pipeline that this runbook ties into.
