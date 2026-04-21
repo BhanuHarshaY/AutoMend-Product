@@ -19,7 +19,7 @@ parallel where possible.
 1. [Prerequisites](#1-prerequisites)
 2. [One-time bootstrap](#2-one-time-bootstrap)
 3. [Terraform apply](#3-terraform-apply)
-4. [Seed model artifacts](#4-seed-model-artifacts)
+4. [Upload model artifacts](#4-upload-model-artifacts)
 5. [Populate application secrets](#5-populate-application-secrets)
 6. [Build + push container images via CI](#6-build--push-container-images-via-ci)
 7. [Verify the deploy](#7-verify-the-deploy)
@@ -163,17 +163,29 @@ Expected output: `CREATE EXTENSION`.
 
 ---
 
-## 4. Seed model artifacts
+## 4. Upload model artifacts
 
-Upload classifier + architect pretrained weights to the GCS model bucket.
-Pod initContainers pull from here on every deploy. RoBERTa-base for
-classifier (~500 MB), Qwen2.5-0.5B-Instruct for architect (~1 GB).
+Terraform creates a GCS bucket for AutoMend's model weights. Pod
+initContainers pull from this bucket on every deploy and mount the
+artifacts at `/models/classifier/` and `/models/architect/` inside the
+api + classifier containers.
+
+Upload your finetuned weights to the two expected prefixes:
 
 ```bash
-pip install huggingface_hub google-cloud-storage
-
 BUCKET=$(terraform -chdir=infra/terraform output -raw models_bucket_name)
-python scripts/seed_default_models.py --bucket "$BUCKET"
+
+# Classifier weights (Model 1) — tokenizer + fine-tuned weights.
+# Expected files: config.json, tokenizer.json, tokenizer_config.json,
+# vocab.json, merges.txt, model.safetensors
+gcloud storage cp -r /path/to/your/classifier/* "gs://$BUCKET/classifier/"
+
+# Architect weights (Model 2) — tokenizer + fine-tuned generator model.
+# Expected files: config.json, generation_config.json, tokenizer.json,
+# tokenizer_config.json, vocab.json, merges.txt, model.safetensors
+# (or the sharded model-*.safetensors + model.safetensors.index.json
+# variant for larger models)
+gcloud storage cp -r /path/to/your/architect/* "gs://$BUCKET/architect/"
 ```
 
 Verify:
@@ -183,10 +195,11 @@ gcloud storage ls "gs://$BUCKET/classifier/"
 gcloud storage ls "gs://$BUCKET/architect/"
 ```
 
-You should see 6–7 files in each prefix (config + tokenizer + safetensors).
-
-For real finetuned weights later, upload to the same prefixes — pods
-pick them up on the next rollout.
+Pods mount these on the next rollout — to trigger without waiting for
+the next deploy, `kubectl -n automend rollout restart deploy/automend-api
+deploy/automend-classifier`. Uploads are lazy-versioned (GCS object
+versioning on), so pushing a bad model + rolling back is just
+re-uploading the previous object.
 
 ---
 
