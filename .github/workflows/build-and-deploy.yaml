@@ -24,6 +24,13 @@ on:
 #   GKE_CLUSTER    — e.g. automend-dev
 #   GKE_LOCATION   — e.g. us-central1
 #   AR_REPO_URL    — e.g. us-central1-docker.pkg.dev/PROJECT/automend
+#   MODELS_BUCKET  — (optional) GCS bucket holding classifier + architect weights.
+#                    From `terraform output -raw models_bucket_name`.
+#                    If unset, pods start without the model-fetch initContainer.
+#   APP_SA_EMAIL   — (optional) GCP app SA email for Workload Identity.
+#                    From `terraform output -raw app_service_account_email`.
+#                    Required if MODELS_BUCKET is set; otherwise initContainer
+#                    hits 403 trying to gcloud-storage-cp.
 
 permissions:
   contents: read
@@ -150,12 +157,20 @@ jobs:
       # values-gcp-quick.yaml (demo-grade) so the pipeline is end-to-end
       # testable before 12.6 ships. Swap the filename when 12.6 merges.
       - name: Helm upgrade AutoMend
+        env:
+          # Empty-string defaults mean the model-fetch initContainer is
+          # skipped via the chart's `if and $cfg.enabled $cfg.bucket` gate —
+          # pods come up on the regex-stub / Gemini path as before.
+          MODELS_BUCKET: ${{ secrets.MODELS_BUCKET }}
+          APP_SA_EMAIL: ${{ secrets.APP_SA_EMAIL }}
         run: |
           helm upgrade --install automend ./infra/helm/automend \
             --namespace automend --create-namespace \
             --values ./infra/helm/automend/values-gcp-quick.yaml \
             --set global.imageRegistry="${REGISTRY}" \
             --set global.imageTag="${{ github.sha }}" \
+            --set "modelStorage.bucket=${MODELS_BUCKET}" \
+            --set "serviceAccount.annotations.iam\.gke\.io/gcp-service-account=${APP_SA_EMAIL}" \
             --reuse-values \
             --wait --timeout 10m
 

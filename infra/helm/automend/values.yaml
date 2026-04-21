@@ -151,6 +151,42 @@ secrets:
     pagerDutyToken: ""
     jiraApiToken: ""
 
+# -----------------------------------------------------------------------------
+# External Secrets Operator integration (Task 12.6)
+#
+# When enabled, the chart emits a ClusterSecretStore + ExternalSecret (see
+# templates/external-secret.yaml) that pulls every AUTOMEND_* credential from
+# GCP Secret Manager and materializes them into the `automend-secrets` k8s
+# Secret. Pair with `secrets.create: false` so helm doesn't fight ESO over
+# ownership of the same Secret name.
+#
+# Pre-reqs (all provisioned by `terraform apply` with
+# `enable_external_secrets = true`):
+#   - ESO installed in the `external-secrets` namespace (helm_release)
+#   - App GCP SA with secretmanager.secretAccessor on every referenced secret
+#   - Workload Identity binding from external-secrets/external-secrets k8s SA
+#     → app GCP SA
+#   - All SM secrets created (cloud-sql password, memorystore auth,
+#     ${prefix}-jwt-secret, ${prefix}-architect-api-key, etc.)
+# -----------------------------------------------------------------------------
+externalSecrets:
+  enabled: false
+  # Project hosting the SM entries. Usually the same as the GKE project.
+  projectId: ""
+  # Cluster that the ESO pod runs in — used by ESO's workloadIdentity auth
+  # to find the correct WI pool.
+  clusterName: ""
+  clusterLocation: ""
+  # Short name of the Cloud SQL + Memorystore password secrets from
+  # Terraform outputs `cloudsql_db_password_secret_id` / `memorystore_auth_secret_id`
+  # (use the `secret_id` not the fully-qualified `projects/.../secrets/...` form).
+  cloudSqlPasswordSecret: ""
+  redisAuthSecret: ""
+  # Prefix applied by Terraform's `app-secrets` module to every managed
+  # credential (JWT, Gemini, Slack, etc.). Matches Terraform output
+  # `app_secrets_prefix`.
+  secretPrefix: ""
+
 # =============================================================================
 # WORKLOAD COMPONENTS
 # =============================================================================
@@ -296,6 +332,36 @@ temporalWorker:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+
+# ---------------------------------------------------------------------------
+# Model artifacts — weights pulled from GCS into pod filesystems on startup.
+#
+# When `enabled: true`, the classifier Deployment (and future architect /
+# generator deployments) gets an initContainer running `google/cloud-sdk`
+# that does `gcloud storage cp -r gs://<bucket>/<prefix>/ <mountPath>/`.
+# A shared `emptyDir` volume exposes the pulled files to the main container.
+#
+# Even when the running image doesn't actually read these files (e.g. the
+# classifier service is in regex-stub mode), the mechanism is live —
+# swapping to real-inference mode is just an env-var flip + pod restart.
+#
+# The app SA needs `roles/storage.objectViewer` on the bucket; the
+# model-storage Terraform module sets this up automatically when apply
+# runs with `github_repository` / app-sa wired.
+# ---------------------------------------------------------------------------
+modelStorage:
+  enabled: false                      # Off by default — flip to true + set bucket to enable.
+  bucket: ""                           # e.g. "automend-dev-models-PROJECTID". See terraform output `models_bucket_name`.
+
+  # Per-component object prefixes + local mount paths. Each entry produces
+  # one initContainer pull. Add more entries as new models come online.
+  components:
+    classifier:
+      prefix: "classifier"              # `gs://<bucket>/classifier/` — pulls RoBERTa tokenizer + weights.
+      mountPath: "/models/classifier"   # where the main container finds them.
+    architect:
+      prefix: "architect"               # `gs://<bucket>/architect/` — pulls Qwen2.5 tokenizer + weights.
+      mountPath: "/models/architect"    # future architect/vLLM Deployment will mount this.
 
 classifier:
   enabled: true

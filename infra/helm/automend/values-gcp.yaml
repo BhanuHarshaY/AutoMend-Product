@@ -1,0 +1,180 @@
+# =============================================================================
+# values-gcp.yaml — production-grade GCP deployment.
+#
+# Unlike values-gcp-quick.yaml (which keeps the in-cluster postgres/redis/
+# temporal subcharts on), this file wires the chart to GCP managed services:
+#   - Cloud SQL Postgres  (external.postgres.host = Terraform output)
+#   - Memorystore Redis   (external.redis.host    = Terraform output)
+#   - Secret Manager      (via External Secrets Operator → automend-secrets)
+#   - GCLB Ingress        (managed load balancer, supports ManagedCertificate)
+#
+# Temporal stays as a subchart for now (Phase 13 revisits Temporal Cloud).
+#
+# Usage (with the output-driven --set overrides handled by the CI workflow,
+# or passed manually from `terraform output`):
+#
+#   helm install automend ./infra/helm/automend \
+#     --namespace automend --create-namespace \
+#     -f ./infra/helm/automend/values-gcp.yaml \
+#     --set "global.imageRegistry=$(tf output -raw artifact_registry_url)" \
+#     --set "global.imageTag=<SHA>" \
+#     --set "external.postgres.host=$(tf output -raw cloudsql_private_ip)" \
+#     --set "external.postgres.user=$(tf output -raw cloudsql_db_user)" \
+#     --set "external.postgres.db=$(tf output -raw cloudsql_db_name)" \
+#     --set "external.redis.host=$(tf output -raw memorystore_host)" \
+#     --set "external.redis.port=$(tf output -raw memorystore_port)" \
+#     --set "externalSecrets.projectId=$(tf output -raw project_id)" \
+#     --set "externalSecrets.clusterName=$(tf output -raw gke_cluster_name)" \
+#     --set "externalSecrets.clusterLocation=$(tf output -raw gke_location)" \
+#     --set "externalSecrets.cloudSqlPasswordSecret=<short name>" \
+#     --set "externalSecrets.redisAuthSecret=<short name>" \
+#     --set "externalSecrets.secretPrefix=$(tf output -raw app_secrets_prefix)" \
+#     --set "serviceAccount.annotations.iam\.gke\.io/gcp-service-account=$(tf output -raw app_service_account_email)"
+#
+# The CI workflow wires all of this via GitHub secrets — operators running
+# by hand can `terraform output -json | jq` to grab everything at once.
+# =============================================================================
+
+global:
+  imagePullPolicy: IfNotPresent
+
+# -----------------------------------------------------------------------------
+# Managed services — in-cluster subcharts OFF, externals ON.
+# -----------------------------------------------------------------------------
+postgres:
+  enabled: false
+redis:
+  enabled: false
+temporal:
+  enabled: true    # Phase 13 may swap for Temporal Cloud
+
+# Host/port overrides for external services. Values populated via --set from
+# Terraform outputs (CI pipeline pulls from GitHub secrets).
+external:
+  postgres:
+    host: ""
+    port: 5432
+    user: "automend"
+    db: "automend"
+  redis:
+    host: ""
+    port: 6379
+  temporal:
+    serverUrl: ""   # leave empty — temporal subchart is still on
+
+# -----------------------------------------------------------------------------
+# Helm does NOT own the Secret — External Secrets Operator creates it.
+# secrets.create: false + the chart's external-secret.yaml template
+# (enabled by externalSecrets.enabled below) together produce exactly one
+# Secret named `automend-secrets` sourced entirely from GCP Secret Manager.
+# -----------------------------------------------------------------------------
+secrets:
+  create: false
+  existingSecret: "automend-secrets"
+
+# -----------------------------------------------------------------------------
+# External Secrets Operator wiring. Actual values come from --set during
+# install (see header comment).
+# -----------------------------------------------------------------------------
+externalSecrets:
+  enabled: true
+  projectId: ""
+  clusterName: ""
+  clusterLocation: ""
+  cloudSqlPasswordSecret: ""
+  redisAuthSecret: ""
+  secretPrefix: ""
+
+# -----------------------------------------------------------------------------
+# Workload Identity — k8s SA impersonates the app GCP SA. Annotation email
+# populated via --set from Terraform output `app_service_account_email`.
+# -----------------------------------------------------------------------------
+serviceAccount:
+  annotations: {}
+  # iam.gke.io/gcp-service-account: automend-app@YOUR-PROJECT.iam.gserviceaccount.com
+
+# -----------------------------------------------------------------------------
+# RBAC — cluster-wide for this path (matches values-gcp-quick.yaml).
+# Add narrower target namespaces if you prefer per-ns Role bindings.
+# -----------------------------------------------------------------------------
+rbac:
+  clusterWide: true
+  targetNamespaces:
+    - default
+
+# -----------------------------------------------------------------------------
+# Production resource sizing. ~2x the quick-deploy values; tune for real load.
+# -----------------------------------------------------------------------------
+api:
+  replicas: 2
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: 2000m, memory: 2Gi }
+
+windowWorker:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+correlationWorker:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+temporalWorker:
+  replicas: 2
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: 2000m, memory: 2Gi }
+
+classifier:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+frontend:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+# -----------------------------------------------------------------------------
+# Config overrides for GCP-prod.
+# -----------------------------------------------------------------------------
+config:
+  logLevel: INFO
+  # Production: 5 minute windows (default).
+  windowSizeSeconds: 300
+  # Architect defaults to Gemini; operators override if switching to a local proxy.
+  architectProvider: gemini
+  architectModel: gemini-2.5-flash
+  architectApiBaseUrl: "https://generativelanguage.googleapis.com"
+
+# -----------------------------------------------------------------------------
+# Ingress — GCLB via the built-in `gce` class. Add a ManagedCertificate for
+# TLS in production; TLS block left empty here so it's safe to install
+# before DNS is set up.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: gce
+  host: automend.example.com
+  tls: []
+
+# -----------------------------------------------------------------------------
+# Model artifacts — pulled from GCS by initContainers. Pairs with the
+# modelStorage bucket provisioned in 12.x's model-storage module.
+# -----------------------------------------------------------------------------
+modelStorage:
+  enabled: true
+  bucket: ""
+  components:
+    classifier:
+      prefix: "classifier"
+      mountPath: "/models/classifier"
+    architect:
+      prefix: "architect"
+      mountPath: "/models/architect"

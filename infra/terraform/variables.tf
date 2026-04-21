@@ -131,6 +131,24 @@ variable "memorystore_memory_size_gb" {
 # CI/CD inputs (Task 12.5)
 # ---------------------------------------------------------------------------
 
+variable "k8s_namespace" {
+  description = "Namespace where the Helm chart deploys AutoMend pods. Drives the Workload Identity binding (`serviceAccount:PROJECT.svc.id.goog[NAMESPACE/K8S_SA]`)."
+  type        = string
+  default     = "automend"
+}
+
+variable "k8s_service_account" {
+  description = "Kubernetes ServiceAccount name the chart creates. Matches `automend.serviceAccountName` helper → release fullname = `automend` for the default install."
+  type        = string
+  default     = "automend"
+}
+
+variable "enable_external_secrets" {
+  description = "Install External Secrets Operator + create the managed SM secrets the chart's ExternalSecret pulls (JWT, Gemini, Slack, etc.). Required when deploying with values-gcp.yaml. Safe to leave false if you're on values-gcp-quick (in-cluster subcharts + helm-managed Secret)."
+  type        = bool
+  default     = false
+}
+
 variable "github_repository" {
   description = "GitHub repository in `OWNER/REPO` form. When set, Terraform provisions a Workload Identity Federation pool + CI service account restricted to this repo's OIDC tokens. Empty string disables WIF + leaves the CI IAM bindings off (useful if you build/push images from a different CI system or manually)."
   type        = string

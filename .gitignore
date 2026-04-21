@@ -36,3 +36,19 @@ slack-patch.yaml
 
 # Also gitignore the extra namespace RBAC helper from the demo push.
 automend-extra-rbac.yaml
+
+# Environment-specific helm value overlays (bucket name, SA email, etc.)
+# not meant for source control.
+model-storage-on.yaml
+
+# Claude-related work notes + build history — local only, not part of the
+# shipped codebase. Keeps the repo focused on runnable infra + app code.
+.claude/
+CLAUDE.md
+PROGRESS.md
+DECISIONS.md
+build_plan.md
+backend_architecture.md
+MANUAL_TESTING.md
+DEPLOY_GCP_QUICK.md
+DEPLOY_GCP_TRUE.md

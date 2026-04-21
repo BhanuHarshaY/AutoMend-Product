@@ -144,3 +144,36 @@ output "workload_identity_provider" {
   description = "Fully-qualified Workload Identity provider resource name to paste into GitHub Actions' `google-github-actions/auth@v2` step. Empty if WIF is disabled."
   value       = length(google_iam_workload_identity_pool_provider.github) > 0 ? google_iam_workload_identity_pool_provider.github[0].name : ""
 }
+
+# ---------------------------------------------------------------------------
+# Model storage (pretrained + finetuned weights pulled by pod initContainers)
+# ---------------------------------------------------------------------------
+
+output "models_bucket_name" {
+  description = "GCS bucket holding classifier + architect model artifacts. Feed to Helm `modelStorage.bucket` and to the seed script."
+  value       = module.model_storage.bucket_name
+}
+
+output "models_bucket_url" {
+  description = "`gs://BUCKET` URL — copy-paste for `gcloud storage cp` / `gsutil ls` commands."
+  value       = module.model_storage.bucket_url
+}
+
+# ---------------------------------------------------------------------------
+# App secrets + External Secrets Operator (Task 12.6)
+# ---------------------------------------------------------------------------
+
+output "app_secrets_prefix" {
+  description = "Shared prefix for managed app secret ids. Feed to the chart's `externalSecrets.secretPrefix` value. Empty if external secrets are disabled."
+  value       = length(module.app_secrets) > 0 ? module.app_secrets[0].secret_id_prefix : ""
+}
+
+output "app_secret_ids" {
+  description = "Map of logical key → Secret Manager id for each managed credential. Empty if external secrets are disabled."
+  value       = length(module.app_secrets) > 0 ? module.app_secrets[0].secret_ids : {}
+}
+
+output "external_secrets_namespace" {
+  description = "Kubernetes namespace ESO runs in. Empty if external secrets are disabled."
+  value       = length(module.external_secrets) > 0 ? module.external_secrets[0].namespace : ""
+}

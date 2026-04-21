@@ -175,6 +175,21 @@ resource "google_service_account" "app" {
   description  = "Pod-level GCP identity via Workload Identity. Receives cloudsql.client, memorystore access, secret accessor roles from the respective modules."
 }
 
+# Workload Identity binding — lets the k8s ServiceAccount in the automend
+# namespace impersonate the app GCP SA. Required for pod initContainers
+# (model fetch from GCS, Cloud SQL Auth Proxy, secret access via GCP APIs,
+# etc.) to get GCP tokens without JSON keys.
+#
+# The k8s SA name comes from the Helm chart's `serviceAccount.name` default
+# (`automend.serviceAccountName` helper → release fullname). When the Helm
+# release name is `automend` in the `automend` namespace, the full identity
+# is `serviceAccount:PROJECT.svc.id.goog[automend/automend]`.
+resource "google_service_account_iam_member" "app_wi_binding" {
+  service_account_id = google_service_account.app.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[${var.k8s_namespace}/${var.k8s_service_account}]"
+}
+
 # ---------------------------------------------------------------------------
 # Cloud SQL (Task 12.3).
 # ---------------------------------------------------------------------------
@@ -294,7 +309,10 @@ resource "google_service_account_iam_member" "ci_wif_binding" {
 # on the specific repo is granted inside the artifact-registry module.
 locals {
   ci_project_roles = [
-    "roles/container.developer", # `gcloud container clusters get-credentials`
+    # container.admin is a superset of container.developer and includes
+    # container.clusters.update — needed so the workflow can add/remove
+    # its runner IP from master_authorized_networks around each deploy.
+    "roles/container.admin",
     "roles/container.clusterViewer",
   ]
 }
@@ -333,4 +351,68 @@ module "artifact_registry" {
   ci_service_account_email = var.github_repository == "" ? "" : google_service_account.ci[0].email
 
   labels = local.common_labels
+}
+
+# ---------------------------------------------------------------------------
+# Model artifacts bucket — pod initContainers pull classifier + architect
+# weights from here on startup. See `modules/model-storage` + the classifier
+# Deployment template for the pull mechanism.
+# ---------------------------------------------------------------------------
+
+module "model_storage" {
+  source = "./modules/model-storage"
+
+  project_id                = var.project_id
+  region                    = var.region
+  bucket_name               = "${local.resource_suffix}-models-${var.project_id}"
+  app_service_account_email = google_service_account.app.email
+  ci_service_account_email  = var.github_repository == "" ? "" : google_service_account.ci[0].email
+
+  labels        = local.common_labels
+  force_destroy = var.env != "prod"  # dev/staging can `terraform destroy` even with uploaded weights
+}
+
+# ---------------------------------------------------------------------------
+# App secrets — Secret Manager entries for every non-auto-generated
+# credential the app reads. DB password + Redis AUTH come from the
+# cloud-sql / memorystore modules; this module covers everything else
+# (JWT secret, Gemini key, Slack, PagerDuty, Jira).
+# ---------------------------------------------------------------------------
+
+module "app_secrets" {
+  source = "./modules/app-secrets"
+  count  = var.enable_external_secrets ? 1 : 0
+
+  project_id                = var.project_id
+  name_prefix               = local.resource_suffix
+  app_service_account_email = google_service_account.app.email
+  labels                    = local.common_labels
+}
+
+# ---------------------------------------------------------------------------
+# External Secrets Operator — materializes GCP Secret Manager entries into
+# a k8s Secret in the automend namespace. Required for values-gcp.yaml
+# (chart's secrets.create: false path). Skip if you're on values-gcp-quick
+# and pass secrets through helm directly.
+# ---------------------------------------------------------------------------
+
+module "external_secrets" {
+  source = "./modules/external-secrets"
+  count  = var.enable_external_secrets ? 1 : 0
+
+  namespace                 = "external-secrets"
+  app_service_account_email = google_service_account.app.email
+
+  # Don't try to install ESO before the cluster exists.
+  depends_on = [module.gke]
+}
+
+# Workload Identity binding — ESO's k8s ServiceAccount
+# (`external-secrets/external-secrets`) impersonates the app GCP SA so it
+# can read from Secret Manager.
+resource "google_service_account_iam_member" "eso_wi_binding" {
+  count              = var.enable_external_secrets ? 1 : 0
+  service_account_id = google_service_account.app.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[external-secrets/external-secrets]"
 }
