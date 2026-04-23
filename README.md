@@ -3,8 +3,7 @@
 **Zapier for MLOps & Infra.**
 
 Most monitoring stacks stop at the alert. A pod starts thrashing, a GPU goes idle at 3 am, your drift score crosses a threshold, and a dashboard turns red. Then someone has to wake up, open five tabs, and type `kubectl` into a terminal. AutoMend is the layer that replaces "someone" with a validated, auditable remediation workflow, and only pages a human when the system isn't sure.
-
-This was a six-person capstone project built at Northeastern University as part of the IE7374 MLOps course, Spring 2026. The system is functional end to end. You can ingest real Kubernetes logs, classify them, generate a remediation playbook from a natural language prompt, and execute it against a cluster with a human-in-the-loop gate on destructive actions.
+ You can ingest real Kubernetes logs, classify them, generate a remediation playbook from a natural language prompt, and execute it against a cluster with a human-in-the-loop gate on destructive actions.
 
 ---
 
