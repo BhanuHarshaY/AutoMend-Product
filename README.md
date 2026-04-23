@@ -178,25 +178,6 @@ sequenceDiagram
     T->>UI: pubsub event
     UI-->>UI: live incident update
 ```
-
----
-
-## Design decisions worth calling out
-
-A few choices that came out of real tradeoffs rather than defaults.
-
-**Pydantic over JSON Schema for the validation gate.** JSON Schema is great for cross-network contracts. Our validation runs in the same process as the executor, so we don't need wire portability, but we do need runtime behavior. `model_validator(mode="after")` lets us enforce "non-empty steps xor non-empty message" cleanly. In JSON Schema that's `oneOf` gymnastics.
-
-**Temporal over Airflow for remediation.** Airflow is batch-scheduled and coarse on retries. A Slack approval step in Airflow is a polling Sensor. In Temporal, it's `Workflow.await_signal`, which can sleep for hours without polling. Airflow still runs our nightly data pipeline where it belongs.
-
-**Two inference services, not one.** The classifier processes discretized token sequences at a 5-minute cadence. The generator processes free-form natural language on human demand. Different input shapes, different latency profiles. One model for both would either be an LLM misused as a classifier or a classifier that can't generate.
-
-**7 training labels, 14 operational labels.** The classifier's training vocabulary is fixed by the labeled data in DS1 (Alibaba) and DS2 (LogHub). The product needs finer distinctions (`failure.gpu` vs `failure.memory` vs `failure.storage`). We resolve this with a two-tier shim: a static map from training labels to coarse product labels, plus log-content regex refinements that split ambiguous cases. This keeps the model decoupled from the product's label space.
-
-**QLoRA on a 1.5B model, not an API call to GPT-4.** Three reasons. Data privacy (production cluster state shouldn't leave the VPC). Latency (sub-400ms on an L4 vs 2-4 seconds round-trip). Cost (a remediation platform that hits GPT-4 on every incident is not economically viable). Tradeoff is raw capability, but the Pydantic gate closes most of the gap because we're mapping intent to a known tool registry, not asking for open-ended reasoning.
-
-**MLX-to-vLLM adapter fusion.** Training ran in MLX on Apple Silicon. Serving runs in vLLM on A100. These runtimes don't share an adapter format. The fix was `mlx_lm fuse --dequantize` to merge the LoRA adapter into the base weights, producing a standard HuggingFace checkpoint that vLLM loads directly. 2.9 GB of merged weights, uploaded to GCS, pulled by a startup script on container boot.
-
 ---
 
 ## Repository layout
