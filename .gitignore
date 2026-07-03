@@ -51,6 +51,7 @@ build_plan.md
 backend_architecture.md
 MANUAL_TESTING.md
 DEPLOY_GCP_TRUE.md
+AutomendProductDetails.md
 
 # Dev-only script for seeding the model bucket with HuggingFace pretrained
 # weights. Production uses operator-uploaded finetuned weights; this helper

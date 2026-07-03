@@ -9,6 +9,7 @@ Most monitoring stacks stop at the alert. A pod starts thrashing, a GPU goes idl
 
 ## Table of contents
 
+- [Demo](#demo)
 - [What it does](#what-it-does)
 - [Architecture](#architecture)
 - [Tech stack](#tech-stack)
@@ -21,6 +22,14 @@ Most monitoring stacks stop at the alert. A pod starts thrashing, a GPU goes idl
 - [Testing](#testing)
 - [Team and contributions](#team-and-contributions)
 - [Companion repository](#companion-repository)
+
+---
+
+## Demo
+
+[![AutoMend demo — from alert to action in seconds](https://img.youtube.com/vi/fT84RhOlLYU/maxresdefault.jpg)](https://youtu.be/fT84RhOlLYU)
+
+▶️ **[Watch the product demo](https://youtu.be/fT84RhOlLYU)** — click the thumbnail above.
 
 ---
 
