@@ -9,7 +9,7 @@ Most monitoring stacks stop at the alert. A pod starts thrashing, a GPU goes idl
 
 ## Table of contents
 
-- [Demo](#demo)
+- [Product Demo Video](#Product-Demo-Video)
 - [What it does](#what-it-does)
 - [Architecture](#architecture)
 - [Tech stack](#tech-stack)
@@ -25,7 +25,7 @@ Most monitoring stacks stop at the alert. A pod starts thrashing, a GPU goes idl
 
 ---
 
-## Demo
+## Product Demo Video
 
 [![AutoMend demo — from alert to action in seconds](https://img.youtube.com/vi/fT84RhOlLYU/maxresdefault.jpg)](https://youtu.be/fT84RhOlLYU)
 
@@ -35,7 +35,7 @@ Most monitoring stacks stop at the alert. A pod starts thrashing, a GPU goes idl
 
 ## What it does
 
-AutoMend sits between your observability stack (Grafana, Datadog, Prometheus, Alertmanager) and your infrastructure (Kubernetes, KServe). When a monitored signal crosses a threshold or a log window classifies as anomalous, the system:
+AutoMend sits between your observability stack (Grafana, Datadog, Prometheus, Alertmanager) and your infrastructure (Kubernetes, KServe). When a monitored signal crosses a threshold or a log window is classified as anomalous, the system:
 
 1. Correlates the signal into an incident, dedups, and applies a cooldown.
 2. Looks up the playbook bound to that incident type.
